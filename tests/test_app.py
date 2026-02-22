@@ -1,0 +1,349 @@
+from __future__ import annotations
+
+import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import chess
+import requests
+
+import app as app_module
+
+SAMPLE_PGN_RUY = """[Event \"Live Chess\"]
+[Site \"Chess.com\"]
+[Date \"2024.01.01\"]
+[Round \"-\"]
+[White \"me\"]
+[Black \"opp\"]
+[Result \"1-0\"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0
+"""
+
+SAMPLE_PGN_QUEEN = """[Event \"Live Chess\"]
+[Site \"Chess.com\"]
+[Date \"2024.01.02\"]
+[Round \"-\"]
+[White \"me\"]
+[Black \"opp2\"]
+[Result \"0-1\"]
+
+1. d4 d5 2. c4 e6 0-1
+"""
+
+
+class DummyResponse:
+    def __init__(self, payload, status_code=200, raise_error=None):
+        self._payload = payload
+        self.status_code = status_code
+        self._raise_error = raise_error
+
+    def raise_for_status(self):
+        if self._raise_error:
+            raise self._raise_error
+
+    def json(self):
+        return self._payload
+
+
+def make_game_payload(
+    game_id,
+    pgn=SAMPLE_PGN_RUY,
+    white="me",
+    black="opp",
+    white_result="win",
+    black_result="checkmated",
+    end_time=1700000000,
+):
+    return {
+        "uuid": game_id,
+        "url": f"https://www.chess.com/game/live/{game_id}",
+        "end_time": end_time,
+        "white": {"username": white, "result": white_result},
+        "black": {"username": black, "result": black_result},
+        "time_class": "blitz",
+        "rules": "chess",
+        "pgn": pgn,
+    }
+
+
+class AppTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tempdir.name) / "test_games.db"
+        self.db_patch = patch.object(app_module, "DB_PATH", self.db_path)
+        self.db_patch.start()
+        app_module.init_db()
+
+        app_module.app.config.update(TESTING=True)
+        self.client = app_module.app.test_client()
+
+    def tearDown(self):
+        self.db_patch.stop()
+        self.tempdir.cleanup()
+
+    def test_app_version_reads_version_file(self):
+        self.assertEqual(app_module.app_version(), "0.1")
+
+    def test_normalize_username_headers_score(self):
+        self.assertEqual(app_module.normalize_username("  UserName  "), "username")
+        self.assertEqual(app_module.chess_com_headers()["User-Agent"], "chessedu-local-viewer/1.0")
+        self.assertEqual(app_module.score_from_result("win"), 1.0)
+        self.assertEqual(app_module.score_from_result("agreed"), 0.5)
+        self.assertEqual(app_module.score_from_result("stalemate"), 0.5)
+        self.assertEqual(app_module.score_from_result("checkmated"), 0.0)
+
+    def test_fetch_archives_and_monthly_games(self):
+        captured = []
+
+        def fake_get(url, headers=None, timeout=None):
+            captured.append((url, headers, timeout))
+            if url.endswith("archives"):
+                return DummyResponse({"archives": ["a1", "a2"]})
+            return DummyResponse({"games": [{"uuid": "g1"}]})
+
+        with patch.object(app_module.requests, "get", side_effect=fake_get):
+            archives = app_module.fetch_archives("me")
+            games = app_module.fetch_monthly_games("https://api.chess.com/month")
+
+        self.assertEqual(archives, ["a1", "a2"])
+        self.assertEqual(games, [{"uuid": "g1"}])
+        self.assertTrue(captured[0][0].endswith("/player/me/games/archives"))
+        self.assertEqual(captured[1][0], "https://api.chess.com/month")
+        self.assertEqual(captured[0][2], app_module.CHESS_COM_TIMEOUT)
+
+    def test_game_id_from_payload_branches(self):
+        self.assertEqual(app_module.game_id_from_payload({"uuid": "u1", "url": "u"}), "u1")
+        self.assertEqual(app_module.game_id_from_payload({"url": "https://g"}), "https://g")
+        self.assertIsNone(app_module.game_id_from_payload({}))
+
+    def test_parse_game_and_index_and_empty_parse(self):
+        indexed = app_module.parse_game_and_index("g1", SAMPLE_PGN_RUY)
+        self.assertEqual(len(indexed), 6)
+        self.assertEqual(indexed[0][0], 1)
+        self.assertEqual(indexed[0][2], "e4")
+        self.assertEqual(indexed[0][5], "w")
+        self.assertEqual(indexed[1][5], "b")
+        self.assertEqual(app_module.parse_game_and_index("g2", ""), [])
+
+    def test_fen_from_move_list_success_and_illegal(self):
+        fen = app_module.fen_from_move_list(["e2e4", "e7e5"])
+        self.assertIsInstance(fen, str)
+        self.assertTrue(fen.startswith("rnbqkbnr"))
+
+        with self.assertRaises(ValueError):
+            app_module.fen_from_move_list(["e2e5"])
+
+    def test_settings_helpers_roundtrip(self):
+        with sqlite3.connect(app_module.DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            app_module.save_setting(conn, "username", "me")
+            conn.commit()
+            self.assertEqual(app_module.get_setting(conn, "username"), "me")
+            self.assertIsNone(app_module.get_setting(conn, "missing"))
+
+    def test_upsert_game_insert_update_and_invalid_payload(self):
+        with app_module.db_conn() as conn:
+            self.assertFalse(app_module.upsert_game(conn, {"uuid": "g0"}))
+
+            payload = make_game_payload("g1")
+            self.assertTrue(app_module.upsert_game(conn, payload))
+
+            count_games = conn.execute("SELECT COUNT(*) AS n FROM games").fetchone()["n"]
+            count_pos = conn.execute("SELECT COUNT(*) AS n FROM positions WHERE game_id='g1'").fetchone()["n"]
+            self.assertEqual(count_games, 1)
+            self.assertEqual(count_pos, 6)
+
+            payload_changed = make_game_payload("g1", pgn="[Event \"X\"]\n\n1. e4 1-0\n")
+            self.assertTrue(app_module.upsert_game(conn, payload_changed))
+
+            count_pos2 = conn.execute("SELECT COUNT(*) AS n FROM positions WHERE game_id='g1'").fetchone()["n"]
+            self.assertEqual(count_pos2, 1)
+
+    def test_index_and_state_endpoints(self):
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Opening Explorer", response.data)
+
+        state = self.client.get("/api/state")
+        self.assertEqual(state.status_code, 200)
+        payload = state.get_json()
+        self.assertEqual(payload["game_count"], 0)
+        self.assertIsNone(payload["username"])
+        self.assertEqual(payload["version"], "0.1")
+
+    def test_api_sync_requires_username(self):
+        response = self.client.post("/api/sync", json={})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("username", response.get_json()["error"])
+
+    def test_api_sync_handles_http_error_with_status(self):
+        error = requests.HTTPError("boom")
+        error.response = SimpleNamespace(status_code=429)
+
+        with patch.object(app_module, "fetch_archives", side_effect=error):
+            response = self.client.post("/api/sync", json={"username": "me"})
+
+        self.assertEqual(response.status_code, 502)
+        self.assertTrue(response.get_json()["error"].endswith("HTTP 429"))
+
+    def test_api_sync_handles_http_error_without_response(self):
+        error = requests.HTTPError("boom")
+
+        with patch.object(app_module, "fetch_archives", side_effect=error):
+            response = self.client.post("/api/sync", json={"username": "me"})
+
+        self.assertEqual(response.status_code, 502)
+        self.assertTrue(response.get_json()["error"].endswith("HTTP 502"))
+
+    def test_api_sync_handles_request_exception(self):
+        with patch.object(app_module, "fetch_archives", side_effect=requests.RequestException("offline")):
+            response = self.client.post("/api/sync", json={"username": "me"})
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("Falha de conexão", response.get_json()["error"])
+
+    def test_api_sync_success_incremental_and_monthly_error(self):
+        archives = ["archive://bad", "archive://good"]
+        calls = []
+
+        def fake_archives(username):
+            self.assertEqual(username, "me")
+            return archives
+
+        def fake_monthly(url):
+            calls.append(url)
+            if url.endswith("bad"):
+                raise requests.RequestException("skip")
+            return [make_game_payload("g1")]
+
+        with patch.object(app_module, "fetch_archives", side_effect=fake_archives), patch.object(
+            app_module, "fetch_monthly_games", side_effect=fake_monthly
+        ):
+            first = self.client.post("/api/sync", json={"username": "Me"})
+            second = self.client.post("/api/sync", json={"username": "me"})
+
+        body_first = first.get_json()
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(body_first["username"], "me")
+        self.assertEqual(body_first["archives_total"], 2)
+        self.assertEqual(body_first["archives_synced_now"], 1)
+        self.assertEqual(body_first["games_imported_now"], 1)
+        self.assertEqual(body_first["games_total_in_db"], 1)
+
+        body_second = second.get_json()
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(body_second["archives_synced_now"], 0)
+        self.assertEqual(body_second["games_imported_now"], 0)
+        self.assertEqual(body_second["games_total_in_db"], 1)
+        self.assertEqual(calls.count("archive://good"), 1)
+
+    def _seed_two_games_for_stats(self):
+        with app_module.db_conn() as conn:
+            app_module.upsert_game(
+                conn,
+                make_game_payload(
+                    "g1",
+                    pgn=SAMPLE_PGN_RUY,
+                    white="me",
+                    black="opp",
+                    white_result="win",
+                    black_result="resigned",
+                    end_time=1700000001,
+                ),
+            )
+            app_module.upsert_game(
+                conn,
+                make_game_payload(
+                    "g2",
+                    pgn=SAMPLE_PGN_QUEEN,
+                    white="opp2",
+                    black="me",
+                    white_result="resigned",
+                    black_result="win",
+                    end_time=1700000002,
+                ),
+            )
+            conn.commit()
+
+    def test_api_stats_requires_params(self):
+        response = self.client.get("/api/stats")
+        self.assertEqual(response.status_code, 400)
+
+    def test_api_stats_returns_move_statistics(self):
+        self._seed_two_games_for_stats()
+        start_fen = chess.Board().fen()
+
+        response = self.client.get(f"/api/stats?username=me&fen={start_fen}")
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+
+        moves = {m["uci"]: m for m in payload["moves"]}
+        self.assertEqual(set(moves.keys()), {"e2e4", "d2d4"})
+        self.assertEqual(moves["e2e4"]["games"], 1)
+        self.assertEqual(moves["d2d4"]["games"], 1)
+        self.assertEqual(moves["e2e4"]["win_rate"], 100.0)
+        self.assertEqual(moves["d2d4"]["win_rate"], 100.0)
+
+    def test_api_games_requires_params(self):
+        response = self.client.get("/api/games")
+        self.assertEqual(response.status_code, 400)
+
+    def test_api_games_lists_games_and_my_result_for_white_and_black(self):
+        self._seed_two_games_for_stats()
+        start_fen = chess.Board().fen()
+
+        response = self.client.get(f"/api/games?username=me&fen={start_fen}")
+        self.assertEqual(response.status_code, 200)
+        games = response.get_json()["games"]
+
+        self.assertEqual(len(games), 2)
+        result_by_id = {g["id"]: g["my_result"] for g in games}
+        self.assertEqual(result_by_id["g1"], "win")
+        self.assertEqual(result_by_id["g2"], "win")
+
+    def test_api_game_not_found_and_found(self):
+        missing = self.client.get("/api/game/not-found")
+        self.assertEqual(missing.status_code, 404)
+
+        with app_module.db_conn() as conn:
+            app_module.upsert_game(conn, make_game_payload("g100"))
+            conn.commit()
+
+        found = self.client.get("/api/game/g100")
+        self.assertEqual(found.status_code, 200)
+        payload = found.get_json()
+        self.assertEqual(payload["id"], "g100")
+        self.assertIn("pgn", payload)
+
+    def test_api_fen_validates_input_and_returns_fen(self):
+        invalid_type = self.client.post("/api/fen", json={"moves": "e2e4"})
+        self.assertEqual(invalid_type.status_code, 400)
+
+        invalid_move = self.client.post("/api/fen", json={"moves": ["e2e5"]})
+        self.assertEqual(invalid_move.status_code, 400)
+
+        valid = self.client.post("/api/fen", json={"moves": ["e2e4", "e7e5"]})
+        self.assertEqual(valid.status_code, 200)
+        self.assertIn("fen", valid.get_json())
+
+    def test_frontend_artifacts_are_present_and_wired(self):
+        root = Path(__file__).resolve().parents[1]
+        template = (root / "templates" / "index.html").read_text(encoding="utf-8")
+        script = (root / "static" / "app.js").read_text(encoding="utf-8")
+        style = (root / "static" / "style.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="sync-btn"', template)
+        self.assertIn('id="db-count"', template)
+        self.assertIn('id="app-version"', template)
+        self.assertIn("function doSync()", script)
+        self.assertIn("function updateVersion(version)", script)
+        self.assertIn(".badge", style)
+        self.assertIn(".app-version", style)
+
+
+if __name__ == "__main__":
+    unittest.main()

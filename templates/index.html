@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chess.com Aberturas</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/chessboardjs@1.0.0/www/css/chessboard-1.0.0.min.css"
+    />
+  </head>
+  <body>
+    <main class="container">
+      <header>
+        <h1>Chess.com Opening Explorer</h1>
+        <p>Entenda seus erros de abertura com base nas suas próprias partidas.</p>
+        <div id="app-version" class="app-version">v0.0</div>
+      </header>
+
+      <section class="controls">
+        <label for="username">Usuário Chess.com</label>
+        <input id="username" type="text" placeholder="seu_username" />
+        <button id="sync-btn">Atualizar banco (incremental)</button>
+        <span id="db-count" class="badge">Banco: 0 partidas</span>
+        <span id="status"></span>
+      </section>
+
+      <section class="layout">
+        <div class="board-area">
+          <div id="board"></div>
+          <div class="board-actions">
+            <button id="reset-btn">Início</button>
+            <button id="back-btn">Voltar lance</button>
+            <button id="games-btn">Ver partidas desta posição</button>
+          </div>
+          <p id="position-info"></p>
+        </div>
+
+        <div class="panel">
+          <h2>Próximos lances</h2>
+          <div id="moves-list" class="list"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Partidas que passaram nesta posição</h2>
+        <div id="games-list" class="list"></div>
+      </section>
+    </main>
+
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chess.js@0.13.4/chess.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chessboardjs@1.0.0/www/js/chessboard-1.0.0.min.js"></script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>
