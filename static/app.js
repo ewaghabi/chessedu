@@ -23,7 +23,6 @@ const el = {
   status: document.getElementById("status"),
   movesList: document.getElementById("moves-list"),
   gamesList: document.getElementById("games-list"),
-  positionInfo: document.getElementById("position-info"),
   gameMeta: document.getElementById("game-meta"),
   playerTop: document.getElementById("player-top"),
   playerBottom: document.getElementById("player-bottom"),
@@ -46,15 +45,6 @@ function updateDbCount(count) {
 function updateVersion(version) {
   if (!version) return;
   el.appVersion.textContent = `v${version}`;
-}
-
-function setPositionInfo() {
-  if (!game) {
-    el.positionInfo.textContent = `Ply: ${currentMoves.length} | Vez: -`;
-    return;
-  }
-  const side = game.turn() === "w" ? "Brancas" : "Pretas";
-  el.positionInfo.textContent = `Ply: ${currentMoves.length} | Vez: ${side}`;
 }
 
 function updateReplayButtons() {
@@ -82,7 +72,6 @@ function renderReplayPosition() {
     game.move(loadedGameMoves[i], { sloppy: true });
   }
   board.position(game.fen());
-  setPositionInfo();
   updateReplayButtons();
 }
 
@@ -121,7 +110,6 @@ function resetBoard() {
   game.reset();
   currentMoves = [];
   board.position(game.fen());
-  setPositionInfo();
 }
 
 async function getCurrentFen() {
@@ -256,7 +244,6 @@ async function loadGame(gameId) {
     const metaTimeClass = data.time_class || "?";
     const metaResult = data.result_label || "?";
     el.gameMeta.textContent = `${metaDate} | ${metaTimeClass} | ${metaResult}`;
-    setPositionInfo();
     updateReplayButtons();
     setStatus(`Partida carregada: ${data.white} vs ${data.black}`, "success");
   } catch (err) {
@@ -274,8 +261,6 @@ async function refreshFromPosition(loadGames = false) {
     setStatus("Informe o usuário e sincronize ao menos uma vez.", "error");
     return;
   }
-
-  setPositionInfo();
 
   try {
     const fen = await getCurrentFen();
@@ -380,7 +365,6 @@ function wireEvents() {
 async function main() {
   setStatus("Inicializando interface...", "loading");
   wireEvents();
-  setPositionInfo();
 
   window.addEventListener("error", (event) => {
     const msg = event.error?.message || event.message || "Erro inesperado no frontend.";
@@ -407,7 +391,6 @@ async function main() {
       pieceTheme: "/static/vendor/chessboardjs/img/chesspieces/wikipedia/{piece}.png",
     });
 
-    setPositionInfo();
     updateReplayButtons();
     await loadState(true);
     await refreshFromPosition();

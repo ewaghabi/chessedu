@@ -175,7 +175,7 @@ class AppTests(unittest.TestCase):
     def test_index_and_state_endpoints(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Opening Explorer", response.data)
+        self.assertIn(b"ChessEdu", response.data)
 
         state = self.client.get("/api/state")
         self.assertEqual(state.status_code, 200)
@@ -405,10 +405,14 @@ class AppTests(unittest.TestCase):
         self.assertIn('id="db-count"', template)
         self.assertIn('id="app-version"', template)
         self.assertIn('id="color-filter"', template)
+        self.assertIn("ChessEdu", template)
+        self.assertNotIn("Chess.com Opening Explorer", template)
+        self.assertNotIn("Entenda seus erros de abertura", template)
         self.assertNotIn('id="games-btn"', template)
         self.assertIn('id="game-meta"', template)
         self.assertIn('id="player-top"', template)
         self.assertIn('id="player-bottom"', template)
+        self.assertNotIn('id="position-info"', template)
         self.assertIn('id="replay-first"', template)
         self.assertIn('id="replay-prev"', template)
         self.assertIn('id="replay-next"', template)
@@ -443,6 +447,8 @@ class AppTests(unittest.TestCase):
         self.assertIn(".player-tag", style)
         self.assertIn(".replay-actions", style)
         self.assertIn(".moves-toolbar", style)
+        self.assertIn(".board-wrap", style)
+        self.assertIn(".filter-block", style)
         self.assertIn(".move-item", style)
 
 

@@ -10,29 +10,39 @@
   <body>
     <main class="container">
       <header>
-        <h1>Chess.com Opening Explorer</h1>
-        <p>Entenda seus erros de abertura com base nas suas próprias partidas.</p>
-        <div id="app-version" class="app-version">v0.0</div>
+        <h1>ChessEdu <span id="app-version" class="app-version">v0.0</span></h1>
       </header>
 
-      <section class="controls">
-        <div class="controls-row">
-          <label for="username">Usuário Chess.com</label>
-          <input id="username" type="text" placeholder="seu_username" />
-          <button id="sync-btn" type="button">
-            <span class="btn-label">Atualizar banco (incremental)</span>
-            <span class="btn-spinner" aria-hidden="true"></span>
-          </button>
-          <span id="db-count" class="badge">Banco: 0 partidas</span>
-        </div>
-        <div id="status" class="status-message"></div>
-      </section>
+      <div id="status" class="status-message"></div>
 
       <section class="layout">
-        <div class="board-area">
+        <aside class="panel settings-panel">
+          <div class="controls-row controls-stack">
+            <label for="username">Usuário Chess.com</label>
+            <input id="username" type="text" placeholder="seu_username" />
+            <button id="sync-btn" type="button">
+              <span class="btn-label">Atualizar banco (incremental)</span>
+              <span class="btn-spinner" aria-hidden="true"></span>
+            </button>
+            <span id="db-count" class="badge">Banco: 0 partidas</span>
+          </div>
+
+          <div class="filter-block">
+            <label for="color-filter">Filtro de cor</label>
+            <select id="color-filter">
+              <option value="any">Tanto faz</option>
+              <option value="white">Brancas</option>
+              <option value="black">Pretas</option>
+            </select>
+          </div>
+        </aside>
+
+        <div class="panel board-panel">
           <div id="game-meta" class="game-meta"></div>
           <div id="player-top" class="player-tag">-</div>
-          <div id="board"></div>
+          <div class="board-wrap">
+            <div id="board"></div>
+          </div>
           <div id="player-bottom" class="player-tag">-</div>
           <div class="replay-actions">
             <button id="replay-first" type="button" disabled>|&lt;</button>
@@ -40,31 +50,18 @@
             <button id="replay-next" type="button" disabled>&gt;</button>
             <button id="replay-last" type="button" disabled>&gt;|</button>
           </div>
-          <p id="position-info"></p>
+          <div id="games-list" class="list games-list"></div>
         </div>
 
-        <div class="panel">
+        <div class="panel moves-panel">
           <div class="moves-toolbar">
             <div class="moves-toolbar-left">
               <button id="reset-btn">Início</button>
               <button id="back-btn">Voltar lance</button>
             </div>
-            <div class="moves-toolbar-right">
-              <label for="color-filter">Filtro</label>
-              <select id="color-filter">
-                <option value="any">Tanto faz</option>
-                <option value="white">Brancas</option>
-                <option value="black">Pretas</option>
-              </select>
-            </div>
           </div>
           <div id="moves-list" class="list"></div>
         </div>
-      </section>
-
-      <section class="panel">
-        <h2>Partidas que passaram nesta posição</h2>
-        <div id="games-list" class="list"></div>
       </section>
     </main>
 
