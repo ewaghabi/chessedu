@@ -86,7 +86,8 @@ class AppTests(unittest.TestCase):
         self.tempdir.cleanup()
 
     def test_app_version_reads_version_file(self):
-        self.assertEqual(app_module.app_version(), "0.1")
+        expected = (Path(__file__).resolve().parents[1] / "VERSION").read_text(encoding="utf-8").strip()
+        self.assertEqual(app_module.app_version(), expected)
 
     def test_normalize_username_headers_score(self):
         self.assertEqual(app_module.normalize_username("  UserName  "), "username")
@@ -173,7 +174,8 @@ class AppTests(unittest.TestCase):
         payload = state.get_json()
         self.assertEqual(payload["game_count"], 0)
         self.assertIsNone(payload["username"])
-        self.assertEqual(payload["version"], "0.1")
+        expected = (Path(__file__).resolve().parents[1] / "VERSION").read_text(encoding="utf-8").strip()
+        self.assertEqual(payload["version"], expected)
 
     def test_api_sync_requires_username(self):
         response = self.client.post("/api/sync", json={})
@@ -335,13 +337,29 @@ class AppTests(unittest.TestCase):
         template = (root / "templates" / "index.html").read_text(encoding="utf-8")
         script = (root / "static" / "app.js").read_text(encoding="utf-8")
         style = (root / "static" / "style.css").read_text(encoding="utf-8")
+        chess_vendor = (root / "static" / "vendor" / "chessjs" / "chess.min.js").read_text(encoding="utf-8")
 
         self.assertIn('id="sync-btn"', template)
+        self.assertIn('class="btn-spinner"', template)
+        self.assertIn('class="status-message"', template)
         self.assertIn('id="db-count"', template)
         self.assertIn('id="app-version"', template)
+        self.assertIn("vendor/chessboardjs/chessboard-1.0.0.min.css", template)
+        self.assertIn("vendor/chessjs/chess.min.js", template)
+        self.assertIn("vendor/jquery/jquery-3.7.1.min.js", template)
+        self.assertIn("vendor/chessboardjs/chessboard-1.0.0.min.js", template)
         self.assertIn("function doSync()", script)
+        self.assertIn("function setSyncLoading(isLoading)", script)
         self.assertIn("function updateVersion(version)", script)
+        self.assertIn("Chessboard(\"board\"", script)
+        self.assertIn("pieceTheme:", script)
+        self.assertIn("window.addEventListener(\"error\"", script)
+        self.assertIn("window.addEventListener(\"unhandledrejection\"", script)
+        self.assertIn("var Chess=", chess_vendor)
+        self.assertNotIn("export const Chess", chess_vendor)
         self.assertIn(".badge", style)
+        self.assertIn(".btn-spinner", style)
+        self.assertIn(".status-message.success", style)
         self.assertIn(".app-version", style)
 
 

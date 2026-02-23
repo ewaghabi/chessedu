@@ -5,10 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Chess.com Aberturas</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/chessboardjs@1.0.0/www/css/chessboard-1.0.0.min.css"
-    />
+    <link rel="stylesheet" href="{{ url_for('static', filename='vendor/chessboardjs/chessboard-1.0.0.min.css') }}" />
   </head>
   <body>
     <main class="container">
@@ -19,11 +16,16 @@
       </header>
 
       <section class="controls">
-        <label for="username">Usuário Chess.com</label>
-        <input id="username" type="text" placeholder="seu_username" />
-        <button id="sync-btn">Atualizar banco (incremental)</button>
-        <span id="db-count" class="badge">Banco: 0 partidas</span>
-        <span id="status"></span>
+        <div class="controls-row">
+          <label for="username">Usuário Chess.com</label>
+          <input id="username" type="text" placeholder="seu_username" />
+          <button id="sync-btn" type="button">
+            <span class="btn-label">Atualizar banco (incremental)</span>
+            <span class="btn-spinner" aria-hidden="true"></span>
+          </button>
+          <span id="db-count" class="badge">Banco: 0 partidas</span>
+        </div>
+        <div id="status" class="status-message"></div>
       </section>
 
       <section class="layout">
@@ -49,9 +51,9 @@
       </section>
     </main>
 
-    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chess.js@0.13.4/chess.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chessboardjs@1.0.0/www/js/chessboard-1.0.0.min.js"></script>
+    <script src="{{ url_for('static', filename='vendor/jquery/jquery-3.7.1.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='vendor/chessjs/chess.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='vendor/chessboardjs/chessboard-1.0.0.min.js') }}"></script>
     <script src="{{ url_for('static', filename='app.js') }}"></script>
   </body>
 </html>

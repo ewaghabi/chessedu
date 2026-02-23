@@ -2,7 +2,7 @@
 
 Visualizador local para estudar suas aberturas com base nas suas partidas do Chess.com.
 
-Versão atual: `0.1` (ver `changelog.md`).
+Versão atual: `0.2.0` (ver `changelog.md`).
 
 ## O que faz
 

@@ -1,6 +1,6 @@
-/* global Chess, Chessboard, $ */
+/* global Chess, Chessboard */
 
-const game = new Chess();
+let game = null;
 let board = null;
 let username = "";
 let currentMoves = [];
@@ -21,15 +21,12 @@ const el = {
 
 function setStatus(text, mode = "info") {
   el.status.textContent = text;
-  if (mode === "error") {
-    el.status.className = "warning";
-    return;
-  }
-  if (mode === "loading") {
-    el.status.className = "loading";
-    return;
-  }
-  el.status.className = "";
+  el.status.className = `status-message ${mode}`;
+}
+
+function setSyncLoading(isLoading) {
+  el.syncBtn.disabled = isLoading;
+  el.syncBtn.classList.toggle("is-loading", isLoading);
 }
 
 function updateDbCount(count) {
@@ -42,6 +39,10 @@ function updateVersion(version) {
 }
 
 function setPositionInfo() {
+  if (!game) {
+    el.positionInfo.textContent = `Ply: ${currentMoves.length} | Vez: -`;
+    return;
+  }
   const side = game.turn() === "w" ? "Brancas" : "Pretas";
   el.positionInfo.textContent = `Ply: ${currentMoves.length} | Vez: ${side}`;
 }
@@ -61,7 +62,7 @@ async function apiJson(url, options = {}) {
   return data;
 }
 
-async function loadState() {
+async function loadState(updateStatus = true) {
   const data = await apiJson("/api/state");
   if (data.username) {
     username = data.username;
@@ -69,10 +70,13 @@ async function loadState() {
   }
   updateVersion(data.version);
   updateDbCount(data.game_count || 0);
-  setStatus(`Pronto. Banco local: ${data.game_count} partidas.`);
+  if (updateStatus) {
+    setStatus(`Pronto. Banco local: ${data.game_count} partidas.`, "success");
+  }
 }
 
 function resetBoard() {
+  if (!game || !board) return;
   game.reset();
   currentMoves = [];
   board.position(game.fen());
@@ -115,12 +119,12 @@ function renderMoves(moves) {
 
     const btn = document.createElement("button");
     btn.textContent = "Entrar";
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
       const move = game.move(m.uci, { sloppy: true });
       if (!move) return;
       currentMoves.push(m.uci);
       board.position(game.fen());
-      refreshFromPosition();
+      await refreshFromPosition();
     });
 
     item.appendChild(left);
@@ -170,6 +174,11 @@ function renderGames(games) {
 }
 
 async function loadGame(gameId) {
+  if (!game || !board) {
+    setStatus("Tabuleiro indisponível no momento.", "error");
+    return;
+  }
+
   try {
     const data = await apiJson(`/api/game/${encodeURIComponent(gameId)}`);
     const replay = new Chess();
@@ -187,13 +196,18 @@ async function loadGame(gameId) {
 
     board.position(game.fen());
     await refreshFromPosition();
-    setStatus(`Partida carregada: ${data.white} vs ${data.black}`);
+    setStatus(`Partida carregada: ${data.white} vs ${data.black}`, "success");
   } catch (err) {
     setStatus(err.message, "error");
   }
 }
 
 async function refreshFromPosition(loadGames = false) {
+  if (!game || !board) {
+    setStatus("Tabuleiro indisponível no momento.", "error");
+    return;
+  }
+
   if (!username) {
     setStatus("Informe o usuário e sincronize ao menos uma vez.", "error");
     return;
@@ -203,6 +217,7 @@ async function refreshFromPosition(loadGames = false) {
 
   try {
     const fen = await getCurrentFen();
+    board.position(fen);
     const statsData = await apiJson(
       `/api/stats?username=${encodeURIComponent(username)}&fen=${encodeURIComponent(fen)}`
     );
@@ -227,7 +242,7 @@ async function doSync() {
   }
 
   setStatus("Sincronizando partidas... aguarde.", "loading");
-  el.syncBtn.disabled = true;
+  setSyncLoading(true);
 
   try {
     const data = await apiJson("/api/sync", {
@@ -239,25 +254,30 @@ async function doSync() {
     username = data.username;
     updateDbCount(data.games_total_in_db || 0);
     setStatus(
-      `Sync concluído. Arquivos novos: ${data.archives_synced_now}/${data.archives_total}. Partidas processadas agora: ${data.games_imported_now}. Total no banco: ${data.games_total_in_db}.`
+      `Sync concluído. Arquivos novos: ${data.archives_synced_now}/${data.archives_total}. Partidas processadas agora: ${data.games_imported_now}. Total no banco: ${data.games_total_in_db}.`,
+      "success"
     );
-    await loadState();
-    await refreshFromPosition(true);
+    await loadState(false);
+    if (game && board) {
+      await refreshFromPosition(true);
+    }
   } catch (err) {
     setStatus(err.message, "error");
   } finally {
-    el.syncBtn.disabled = false;
+    setSyncLoading(false);
   }
 }
 
 function wireEvents() {
   el.syncBtn.addEventListener("click", doSync);
   el.resetBtn.addEventListener("click", async () => {
+    if (!game || !board) return;
     resetBoard();
     await refreshFromPosition();
   });
 
   el.backBtn.addEventListener("click", async () => {
+    if (!game || !board) return;
     if (!currentMoves.length) return;
     game.undo();
     currentMoves.pop();
@@ -272,15 +292,36 @@ function wireEvents() {
 
 async function main() {
   setStatus("Inicializando interface...", "loading");
+  wireEvents();
+  setPositionInfo();
+
+  window.addEventListener("error", (event) => {
+    const msg = event.error?.message || event.message || "Erro inesperado no frontend.";
+    setStatus(`Erro no frontend: ${msg}`, "error");
+  });
+
+  window.addEventListener("unhandledrejection", (event) => {
+    const msg = event.reason?.message || String(event.reason || "Erro assíncrono no frontend.");
+    setStatus(`Erro no frontend: ${msg}`, "error");
+  });
+
   try {
+    if (typeof Chess === "undefined") {
+      throw new Error("Biblioteca chess.js não carregou.");
+    }
+    if (typeof Chessboard === "undefined") {
+      throw new Error("Biblioteca chessboard.js não carregou.");
+    }
+
+    game = new Chess();
     board = Chessboard("board", {
       position: "start",
       draggable: false,
+      pieceTheme: "/static/vendor/chessboardjs/img/chesspieces/wikipedia/{piece}.png",
     });
 
-    wireEvents();
     setPositionInfo();
-    await loadState();
+    await loadState(true);
     await refreshFromPosition();
   } catch (err) {
     setStatus(`Falha ao inicializar app: ${err.message}`, "error");

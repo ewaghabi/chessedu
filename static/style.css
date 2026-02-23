@@ -54,9 +54,15 @@ header p {
 
 .controls {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.controls-row {
+  display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 16px;
   flex-wrap: wrap;
 }
 
@@ -89,7 +95,24 @@ button:active {
 
 #status {
   color: var(--muted);
+}
+
+.status-message {
+  min-height: 1.2em;
+  font-size: 0.85rem;
   font-weight: 600;
+}
+
+.status-message.loading {
+  color: #0b5d56;
+}
+
+.status-message.success {
+  color: #1d4ed8;
+}
+
+.status-message.error {
+  color: var(--danger);
 }
 
 .badge {
@@ -102,8 +125,35 @@ button:active {
   font-weight: 700;
 }
 
-.loading {
-  color: #0b5d56;
+#sync-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 220px;
+}
+
+.btn-spinner {
+  display: none;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+#sync-btn.is-loading .btn-label {
+  display: none;
+}
+
+#sync-btn.is-loading .btn-spinner {
+  display: inline-block;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .layout {

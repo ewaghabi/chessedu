@@ -29,11 +29,36 @@ Este repositório contém um aplicativo local para analisar partidas do Chess.co
 - Tratar erros com mensagens acionáveis para usuário e para debug.
 - Evitar acoplamento entre camadas (UI não deve depender de SQL direto, por exemplo).
 
+## Primitivas obrigatórias de execução
+- Nunca implementar código diretamente após um pedido de mudança: primeiro submeter um plano de implementação para revisão e aprovação do usuário.
+- Toda vez que um erro de comportamento/técnica/prática de desenvolvimento for confirmado, registrar o erro neste `AGENTS.md` com causa raiz e ação preventiva para evitar repetição.
+- Sempre que o usuário escrever "gravar uma minor", executar obrigatoriamente:
+  1) suíte completa de testes;
+  2) incremento de versão em `major.minor.patch` (incrementar `minor`, zerando `patch`);
+  3) nova entrada no `changelog.md` com principais modificações;
+  4) commit local;
+  5) confirmação explícita da branch antes de qualquer push remoto.
+
+## Registro de erros confirmados
+- 2026-02-22 - Dependência crítica de CDN para tabuleiro (bibliotecas externas) em ambiente com restrição de rede.
+  - Causa raiz: frontend dependia de assets remotos para funcionalidade essencial.
+  - Prevenção: vendorizar dependências frontend críticas no repositório e servir localmente.
+- 2026-02-22 - Feedback de sync insuficiente para usuário.
+  - Causa raiz: ausência de estado visual robusto para loading/sucesso/erro no componente de sincronização.
+  - Prevenção: manter padrão obrigatório de UX com botão desabilitado durante ação, spinner e mensagem de resultado contextual no próprio bloco.
+- 2026-02-22 - Implementação de tabuleiro custom sem necessidade causou regressão visual (tabuleiro sem peças).
+  - Causa raiz: tentativa de substituir biblioteca consolidada por implementação própria em vez de vendorizar dependências.
+  - Prevenção: priorizar integração de biblioteca estável local (vendorizada) antes de implementar solução custom para componente crítico.
+- 2026-02-22 - `chess.js` vendorizado em formato ESM usado como script clássico, quebrando inicialização (`Chess` indefinido).
+  - Causa raiz: seleção incorreta do artefato de distribuição JavaScript.
+  - Prevenção: validar formato do bundle vendorizado (global/UMD vs ESM) e manter teste de regressão que rejeita `export const Chess` no arquivo usado pelo frontend.
+
 ## Política obrigatória de testes
 - Ao finalizar qualquer nova feature: criar testes novos cobrindo os novos fluxos e bordas.
 - Ao corrigir bug: adicionar teste de regressão que falha antes da correção e passa depois.
 - Antes de cada commit: executar toda a suíte de testes.
 - O commit só pode seguir se todos os testes passarem.
+- Procedimento obrigatório de bugfix: escrever primeiro o teste que reproduz a falha, executar para confirmar falha, aplicar a correção, e executar novamente para confirmar sucesso.
 
 ## Comandos padrão
 Instalação:
