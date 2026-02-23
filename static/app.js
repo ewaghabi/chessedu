@@ -5,8 +5,12 @@ let board = null;
 let username = "";
 let currentMoves = [];
 let colorFilter = "any";
+let autoFlipEnabled = false;
+let ignoreTimeoutLosses = false;
+let selectedTimeClasses = new Set(["blitz", "rapid", "bullet", "outros"]);
 let loadedGameMoves = null;
 let replayIndex = 0;
+let loadedGameIsUserBlack = false;
 
 const el = {
   username: document.getElementById("username"),
@@ -18,6 +22,14 @@ const el = {
   replayNext: document.getElementById("replay-next"),
   replayLast: document.getElementById("replay-last"),
   colorFilter: document.getElementById("color-filter"),
+  colorFilterLabel: document.getElementById("color-filter-label"),
+  autoFlip: document.getElementById("auto-flip"),
+  timeBlitz: document.getElementById("time-blitz"),
+  timeRapid: document.getElementById("time-rapid"),
+  timeBullet: document.getElementById("time-bullet"),
+  timeOutros: document.getElementById("time-outros"),
+  ignoreTimeoutLosses: document.getElementById("ignore-timeout-losses"),
+  filteredCount: document.getElementById("filtered-count"),
   dbCount: document.getElementById("db-count"),
   appVersion: document.getElementById("app-version"),
   status: document.getElementById("status"),
@@ -47,6 +59,43 @@ function updateVersion(version) {
   el.appVersion.textContent = `v${version}`;
 }
 
+function updateColorFilterLabel() {
+  el.colorFilterLabel.textContent = username ? `${username} joga de:` : "Jogador joga de:";
+}
+
+function updateFilteredCount(count) {
+  el.filteredCount.textContent = `Partidas com filtros: ${count}`;
+}
+
+function buildFilterQuery() {
+  const timeClasses = [...selectedTimeClasses].join(",");
+  return `color=${encodeURIComponent(colorFilter)}&time_classes=${encodeURIComponent(timeClasses)}&ignore_timeout_losses=${
+    ignoreTimeoutLosses ? "1" : "0"
+  }`;
+}
+
+function applyBoardOrientation() {
+  if (!board) return;
+  if (!autoFlipEnabled) {
+    board.orientation("white");
+    return;
+  }
+  if (loadedGameMoves && loadedGameIsUserBlack) {
+    board.orientation("black");
+    return;
+  }
+  board.orientation(colorFilter === "black" ? "black" : "white");
+}
+
+async function refreshFilteredCount() {
+  if (!username) {
+    updateFilteredCount(0);
+    return;
+  }
+  const data = await apiJson(`/api/count?username=${encodeURIComponent(username)}&${buildFilterQuery()}`);
+  updateFilteredCount(data.count || 0);
+}
+
 function updateReplayButtons() {
   const hasLoadedGame = Array.isArray(loadedGameMoves) && loadedGameMoves.length > 0;
   el.replayFirst.disabled = !hasLoadedGame || replayIndex <= 0;
@@ -58,10 +107,12 @@ function updateReplayButtons() {
 function clearReplayState() {
   loadedGameMoves = null;
   replayIndex = 0;
+  loadedGameIsUserBlack = false;
   updateReplayButtons();
   el.gameMeta.textContent = "";
   el.playerTop.textContent = "-";
   el.playerBottom.textContent = "-";
+  applyBoardOrientation();
 }
 
 function renderReplayPosition() {
@@ -99,6 +150,8 @@ async function loadState(updateStatus = true) {
   el.username.disabled = (data.game_count || 0) > 0;
   updateVersion(data.version);
   updateDbCount(data.game_count || 0);
+  updateColorFilterLabel();
+  await refreshFilteredCount();
   if (updateStatus) {
     setStatus(`Pronto. Banco local: ${data.game_count} partidas.`, "success");
   }
@@ -128,15 +181,28 @@ function renderMoves(moves) {
     return;
   }
 
+  const fenParts = game.fen().split(" ");
+  const turn = fenParts[1];
+  const fullmove = Number(fenParts[5] || 1);
+
+  function formatMoveLabel(san, moveTurn, moveNumber) {
+    if (moveTurn === "b") {
+      return `${moveNumber}... ${san}`;
+    }
+    return `${moveNumber}. ${san}`;
+  }
+
   for (const m of moves) {
     const item = document.createElement("div");
     item.className = "item move-item";
     item.setAttribute("role", "button");
     item.setAttribute("tabindex", "0");
+    const pct = Math.max(0, Math.min(100, Number(m.win_rate) || 0));
+    item.style.setProperty("--win-rate", `${pct}%`);
 
     const moveMain = document.createElement("div");
     moveMain.className = "move-main";
-    moveMain.textContent = m.san;
+    moveMain.textContent = formatMoveLabel(m.san, turn, fullmove);
 
     const moveStats = document.createElement("div");
     moveStats.className = "move-stats";
@@ -187,7 +253,16 @@ function renderGames(games) {
 
   for (const g of games) {
     const item = document.createElement("div");
-    item.className = "item";
+    item.className = "item game-result-draw";
+    if (g.my_result === "win") {
+      item.classList.add("game-result-win");
+      item.classList.remove("game-result-draw");
+    } else if (["agreed", "repetition", "stalemate", "timevsinsufficient", "insufficient", "50move"].includes(g.my_result)) {
+      item.classList.add("game-result-draw");
+    } else {
+      item.classList.add("game-result-loss");
+      item.classList.remove("game-result-draw");
+    }
 
     const left = document.createElement("div");
     left.className = "left";
@@ -237,6 +312,8 @@ async function loadGame(gameId) {
     }
 
     replayIndex = loadedGameMoves.length;
+    loadedGameIsUserBlack = data.black === username;
+    applyBoardOrientation();
     board.position(game.fen());
     el.playerTop.textContent = buildPlayerLabel(data.black, data.black_rating);
     el.playerBottom.textContent = buildPlayerLabel(data.white, data.white_rating);
@@ -264,18 +341,20 @@ async function refreshFromPosition(loadGames = false) {
 
   try {
     const fen = await getCurrentFen();
+    applyBoardOrientation();
     board.position(fen);
     const statsData = await apiJson(
-      `/api/stats?username=${encodeURIComponent(username)}&fen=${encodeURIComponent(fen)}&color=${encodeURIComponent(colorFilter)}`
+      `/api/stats?username=${encodeURIComponent(username)}&fen=${encodeURIComponent(fen)}&${buildFilterQuery()}`
     );
     renderMoves(statsData.moves);
 
     if (loadGames) {
       const gamesData = await apiJson(
-        `/api/games?username=${encodeURIComponent(username)}&fen=${encodeURIComponent(fen)}&color=${encodeURIComponent(colorFilter)}`
+        `/api/games?username=${encodeURIComponent(username)}&fen=${encodeURIComponent(fen)}&${buildFilterQuery()}`
       );
       renderGames(gamesData.games);
     }
+    await refreshFilteredCount();
   } catch (err) {
     setStatus(err.message, "error");
   }
@@ -305,6 +384,7 @@ async function doSync() {
       "success"
     );
     await loadState(false);
+    updateColorFilterLabel();
     if (game && board) {
       await refreshFromPosition(true);
     }
@@ -316,6 +396,18 @@ async function doSync() {
 }
 
 function wireEvents() {
+  const timeClassInputs = [
+    { key: "blitz", input: el.timeBlitz },
+    { key: "rapid", input: el.timeRapid },
+    { key: "bullet", input: el.timeBullet },
+    { key: "outros", input: el.timeOutros },
+  ];
+
+  const handleFilterChange = async () => {
+    applyBoardOrientation();
+    await refreshFromPosition(true);
+  };
+
   el.syncBtn.addEventListener("click", doSync);
   el.resetBtn.addEventListener("click", async () => {
     if (!game || !board) return;
@@ -334,8 +426,36 @@ function wireEvents() {
 
   el.colorFilter.addEventListener("change", async () => {
     colorFilter = el.colorFilter.value;
-    await refreshFromPosition(true);
+    await handleFilterChange();
   });
+
+  el.autoFlip.addEventListener("change", async () => {
+    autoFlipEnabled = el.autoFlip.checked;
+    applyBoardOrientation();
+    await refreshFilteredCount();
+  });
+
+  el.ignoreTimeoutLosses.addEventListener("change", async () => {
+    ignoreTimeoutLosses = el.ignoreTimeoutLosses.checked;
+    await handleFilterChange();
+  });
+
+  for (const { key, input } of timeClassInputs) {
+    input.addEventListener("change", async () => {
+      if (!input.checked && selectedTimeClasses.size === 1 && selectedTimeClasses.has(key)) {
+        input.checked = true;
+        setStatus("Selecione ao menos um ritmo.", "error");
+        return;
+      }
+
+      if (input.checked) {
+        selectedTimeClasses.add(key);
+      } else {
+        selectedTimeClasses.delete(key);
+      }
+      await handleFilterChange();
+    });
+  }
 
   el.replayFirst.addEventListener("click", () => {
     if (!loadedGameMoves) return;
@@ -391,6 +511,8 @@ async function main() {
       pieceTheme: "/static/vendor/chessboardjs/img/chesspieces/wikipedia/{piece}.png",
     });
 
+    updateColorFilterLabel();
+    applyBoardOrientation();
     updateReplayButtons();
     await loadState(true);
     await refreshFromPosition();

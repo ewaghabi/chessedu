@@ -238,6 +238,25 @@ def get_setting(conn: sqlite3.Connection, key: str) -> str | None:
     return row["value"] if row else None
 
 
+def infer_username_from_games(conn: sqlite3.Connection) -> str | None:
+    row = conn.execute(
+        """
+        WITH players AS (
+            SELECT white AS username FROM games
+            UNION ALL
+            SELECT black AS username FROM games
+        )
+        SELECT username, COUNT(*) AS n
+        FROM players
+        WHERE username IS NOT NULL AND TRIM(username) <> ''
+        GROUP BY username
+        ORDER BY n DESC, username ASC
+        LIMIT 1
+        """
+    ).fetchone()
+    return row["username"] if row else None
+
+
 def fen_from_move_list(moves_uci: list[str]) -> str:
     board = chess.Board()
     for uci in moves_uci:
@@ -253,6 +272,67 @@ def validate_color_filter(value: str) -> str:
     if color not in {"any", "white", "black"}:
         raise ValueError("Parâmetro color inválido. Use: any, white, black.")
     return color
+
+
+def parse_time_classes(value: str | None) -> list[str]:
+    allowed = {"blitz", "rapid", "bullet", "outros"}
+    if value is None:
+        return ["blitz", "rapid", "bullet", "outros"]
+
+    parsed = [item.strip().lower() for item in value.split(",") if item.strip()]
+    if not parsed:
+        raise ValueError("Parâmetro time_classes inválido. Informe ao menos um ritmo.")
+    if any(item not in allowed for item in parsed):
+        raise ValueError("Parâmetro time_classes inválido. Use: blitz, rapid, bullet, outros.")
+
+    deduped: list[str] = []
+    for item in parsed:
+        if item not in deduped:
+            deduped.append(item)
+    return deduped
+
+
+def parse_bool_flag(value: str | None) -> bool:
+    normalized = (value or "0").strip().lower()
+    return normalized in {"1", "true", "yes", "on"}
+
+
+def build_game_filters_sql(
+    username: str, color_filter: str, time_classes: list[str], ignore_timeout_losses: bool
+) -> tuple[str, list[Any]]:
+    conditions: list[str] = []
+    params: list[Any] = []
+
+    if color_filter == "white":
+        conditions.append("g.white = ?")
+        params.append(username)
+    elif color_filter == "black":
+        conditions.append("g.black = ?")
+        params.append(username)
+
+    main_time_classes = [item for item in time_classes if item in {"blitz", "rapid", "bullet"}]
+    include_others = "outros" in time_classes
+
+    if main_time_classes and include_others:
+        placeholders = ",".join(["?"] * len(main_time_classes))
+        conditions.append(
+            f"(g.time_class IN ({placeholders}) OR g.time_class IS NULL OR g.time_class NOT IN ('blitz', 'rapid', 'bullet'))"
+        )
+        params.extend(main_time_classes)
+    elif main_time_classes:
+        placeholders = ",".join(["?"] * len(main_time_classes))
+        conditions.append(f"g.time_class IN ({placeholders})")
+        params.extend(main_time_classes)
+    else:
+        conditions.append("(g.time_class IS NULL OR g.time_class NOT IN ('blitz', 'rapid', 'bullet'))")
+
+    if ignore_timeout_losses:
+        conditions.append("NOT (g.white_result = 'timeout' OR g.black_result = 'timeout')")
+
+    if not conditions:
+        return "", params
+
+    return " AND " + " AND ".join(conditions), params
 
 
 def result_label(white_result: str | None, black_result: str | None) -> str:
@@ -300,6 +380,12 @@ def api_state():
     with closing(db_conn()) as conn:
         username = get_setting(conn, "username")
         game_count = conn.execute("SELECT COUNT(*) AS n FROM games").fetchone()["n"]
+        if game_count > 0 and not username:
+            inferred = infer_username_from_games(conn)
+            if inferred:
+                username = inferred
+                save_setting(conn, "username", inferred)
+                conn.commit()
     return jsonify(
         {
             "username": username,
@@ -377,19 +463,23 @@ def api_stats():
     username = request.args.get("username", "").strip().lower()
     fen = request.args.get("fen", "").strip()
     color = request.args.get("color", "any")
+    time_classes = request.args.get("time_classes")
+    ignore_timeout_losses = request.args.get("ignore_timeout_losses", "0")
 
     if not username or not fen:
         return jsonify({"error": "Parâmetros obrigatórios: username e fen."}), 400
     try:
         color_filter = validate_color_filter(color)
+        selected_time_classes = parse_time_classes(time_classes)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
-    color_condition = ""
-    if color_filter == "white":
-        color_condition = " AND g.white = ?"
-    elif color_filter == "black":
-        color_condition = " AND g.black = ?"
+    filters_sql, filter_params = build_game_filters_sql(
+        username=username,
+        color_filter=color_filter,
+        time_classes=selected_time_classes,
+        ignore_timeout_losses=parse_bool_flag(ignore_timeout_losses),
+    )
 
     query = f"""
             SELECT
@@ -406,13 +496,12 @@ def api_stats():
             JOIN games g ON g.id = p.game_id
             WHERE p.fen = ?
               AND (g.white = ? OR g.black = ?)
-              {color_condition}
+              {filters_sql}
             GROUP BY p.move_san, p.move_uci
             ORDER BY games_count DESC, win_rate DESC
             """
     params = [username, username, fen, username, username]
-    if color_filter != "any":
-        params.append(username)
+    params.extend(filter_params)
 
     with closing(db_conn()) as conn:
         rows = conn.execute(query, params).fetchall()
@@ -434,19 +523,23 @@ def api_games():
     username = request.args.get("username", "").strip().lower()
     fen = request.args.get("fen", "").strip()
     color = request.args.get("color", "any")
+    time_classes = request.args.get("time_classes")
+    ignore_timeout_losses = request.args.get("ignore_timeout_losses", "0")
 
     if not username or not fen:
         return jsonify({"error": "Parâmetros obrigatórios: username e fen."}), 400
     try:
         color_filter = validate_color_filter(color)
+        selected_time_classes = parse_time_classes(time_classes)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
-    color_condition = ""
-    if color_filter == "white":
-        color_condition = " AND g.white = ?"
-    elif color_filter == "black":
-        color_condition = " AND g.black = ?"
+    filters_sql, filter_params = build_game_filters_sql(
+        username=username,
+        color_filter=color_filter,
+        time_classes=selected_time_classes,
+        ignore_timeout_losses=parse_bool_flag(ignore_timeout_losses),
+    )
 
     query = f"""
             SELECT DISTINCT
@@ -462,13 +555,12 @@ def api_games():
             JOIN games g ON g.id = p.game_id
             WHERE p.fen = ?
               AND (g.white = ? OR g.black = ?)
-              {color_condition}
+              {filters_sql}
             ORDER BY g.end_time DESC
             LIMIT 250
             """
     params = [fen, username, username]
-    if color_filter != "any":
-        params.append(username)
+    params.extend(filter_params)
 
     with closing(db_conn()) as conn:
         rows = conn.execute(query, params).fetchall()
@@ -491,6 +583,43 @@ def api_games():
         )
 
     return jsonify({"fen": fen, "games": games})
+
+
+@app.get("/api/count")
+def api_count():
+    username = request.args.get("username", "").strip().lower()
+    color = request.args.get("color", "any")
+    time_classes = request.args.get("time_classes")
+    ignore_timeout_losses = request.args.get("ignore_timeout_losses", "0")
+
+    if not username:
+        return jsonify({"error": "Parâmetro obrigatório: username."}), 400
+    try:
+        color_filter = validate_color_filter(color)
+        selected_time_classes = parse_time_classes(time_classes)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    filters_sql, filter_params = build_game_filters_sql(
+        username=username,
+        color_filter=color_filter,
+        time_classes=selected_time_classes,
+        ignore_timeout_losses=parse_bool_flag(ignore_timeout_losses),
+    )
+
+    query = f"""
+            SELECT COUNT(*) AS n
+            FROM games g
+            WHERE (g.white = ? OR g.black = ?)
+              {filters_sql}
+            """
+    params = [username, username]
+    params.extend(filter_params)
+
+    with closing(db_conn()) as conn:
+        count = conn.execute(query, params).fetchone()["n"]
+
+    return jsonify({"username": username, "count": count})
 
 
 @app.get("/api/game/<game_id>")

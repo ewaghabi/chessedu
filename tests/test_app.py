@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import shutil
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -57,6 +59,7 @@ def make_game_payload(
     white_result="win",
     black_result="checkmated",
     end_time=1700000000,
+    time_class="blitz",
 ):
     return {
         "uuid": game_id,
@@ -64,7 +67,7 @@ def make_game_payload(
         "end_time": end_time,
         "white": {"username": white, "result": white_result},
         "black": {"username": black, "result": black_result},
-        "time_class": "blitz",
+        "time_class": time_class,
         "rules": "chess",
         "pgn": pgn,
     }
@@ -146,6 +149,20 @@ class AppTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             app_module.validate_color_filter("blue")
 
+    def test_parse_time_classes(self):
+        self.assertEqual(
+            app_module.parse_time_classes(None),
+            ["blitz", "rapid", "bullet", "outros"],
+        )
+        self.assertEqual(
+            app_module.parse_time_classes(" blitz,rapid,blitz,outros "),
+            ["blitz", "rapid", "outros"],
+        )
+        with self.assertRaises(ValueError):
+            app_module.parse_time_classes("")
+        with self.assertRaises(ValueError):
+            app_module.parse_time_classes("daily")
+
     def test_settings_helpers_roundtrip(self):
         with sqlite3.connect(app_module.DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
@@ -184,6 +201,24 @@ class AppTests(unittest.TestCase):
         self.assertIsNone(payload["username"])
         expected = (Path(__file__).resolve().parents[1] / "VERSION").read_text(encoding="utf-8").strip()
         self.assertEqual(payload["version"], expected)
+
+    def test_api_state_infers_username_when_games_exist_without_setting(self):
+        with app_module.db_conn() as conn:
+            app_module.upsert_game(
+                conn,
+                make_game_payload("g_state_1", white="me", black="opp", time_class="blitz"),
+            )
+            app_module.upsert_game(
+                conn,
+                make_game_payload("g_state_2", white="opp2", black="me", time_class="rapid"),
+            )
+            conn.commit()
+
+        state = self.client.get("/api/state")
+        self.assertEqual(state.status_code, 200)
+        payload = state.get_json()
+        self.assertEqual(payload["username"], "me")
+        self.assertEqual(payload["game_count"], 2)
 
     def test_api_sync_requires_username(self):
         response = self.client.post("/api/sync", json={})
@@ -279,6 +314,62 @@ class AppTests(unittest.TestCase):
             )
             conn.commit()
 
+    def _seed_games_for_advanced_filters(self):
+        with app_module.db_conn() as conn:
+            app_module.upsert_game(
+                conn,
+                make_game_payload(
+                    "g_blitz",
+                    pgn=SAMPLE_PGN_RUY,
+                    white="me",
+                    black="oppb",
+                    white_result="win",
+                    black_result="resigned",
+                    end_time=1700000101,
+                    time_class="blitz",
+                ),
+            )
+            app_module.upsert_game(
+                conn,
+                make_game_payload(
+                    "g_rapid_timeout_white",
+                    pgn=SAMPLE_PGN_QUEEN,
+                    white="me",
+                    black="oppr",
+                    white_result="timeout",
+                    black_result="win",
+                    end_time=1700000102,
+                    time_class="rapid",
+                ),
+            )
+            app_module.upsert_game(
+                conn,
+                make_game_payload(
+                    "g_daily",
+                    pgn=SAMPLE_PGN_RUY,
+                    white="oppd",
+                    black="me",
+                    white_result="resigned",
+                    black_result="win",
+                    end_time=1700000103,
+                    time_class="daily",
+                ),
+            )
+            app_module.upsert_game(
+                conn,
+                make_game_payload(
+                    "g_timeout_black",
+                    pgn=SAMPLE_PGN_QUEEN,
+                    white="oppx",
+                    black="me",
+                    white_result="win",
+                    black_result="timeout",
+                    end_time=1700000104,
+                    time_class="bullet",
+                ),
+            )
+            conn.commit()
+
     def test_api_stats_requires_params(self):
         response = self.client.get("/api/stats")
         self.assertEqual(response.status_code, 400)
@@ -360,6 +451,69 @@ class AppTests(unittest.TestCase):
         self.assertEqual(white_ids, {"g1"})
         self.assertEqual(black_ids, {"g2"})
 
+    def test_api_stats_filters_time_classes_and_timeout(self):
+        self._seed_games_for_advanced_filters()
+        start_fen = chess.Board().fen()
+
+        only_others = self.client.get(
+            f"/api/stats?username=me&fen={start_fen}&time_classes=outros&ignore_timeout_losses=0"
+        )
+        self.assertEqual(only_others.status_code, 200)
+        others_moves = only_others.get_json()["moves"]
+        self.assertEqual(len(others_moves), 1)
+        self.assertEqual(others_moves[0]["games"], 1)
+
+        no_timeout = self.client.get(
+            f"/api/stats?username=me&fen={start_fen}&time_classes=blitz,rapid,bullet,outros&ignore_timeout_losses=1"
+        )
+        self.assertEqual(no_timeout.status_code, 200)
+        filtered_total = sum(move["games"] for move in no_timeout.get_json()["moves"])
+        self.assertEqual(filtered_total, 2)
+
+        invalid = self.client.get(f"/api/stats?username=me&fen={start_fen}&time_classes=")
+        self.assertEqual(invalid.status_code, 400)
+
+    def test_api_games_filters_time_classes_and_timeout(self):
+        self._seed_games_for_advanced_filters()
+        start_fen = chess.Board().fen()
+
+        others_only = self.client.get(
+            f"/api/games?username=me&fen={start_fen}&time_classes=outros&ignore_timeout_losses=0"
+        )
+        self.assertEqual(others_only.status_code, 200)
+        other_ids = {g["id"] for g in others_only.get_json()["games"]}
+        self.assertEqual(other_ids, {"g_daily"})
+
+        no_timeout = self.client.get(
+            f"/api/games?username=me&fen={start_fen}&time_classes=blitz,rapid,bullet,outros&ignore_timeout_losses=1"
+        )
+        self.assertEqual(no_timeout.status_code, 200)
+        no_timeout_ids = {g["id"] for g in no_timeout.get_json()["games"]}
+        self.assertEqual(no_timeout_ids, {"g_blitz", "g_daily"})
+
+        invalid = self.client.get(f"/api/games?username=me&fen={start_fen}&time_classes=blitz,daily")
+        self.assertEqual(invalid.status_code, 400)
+
+    def test_api_count_requires_username_and_applies_filters(self):
+        missing = self.client.get("/api/count")
+        self.assertEqual(missing.status_code, 400)
+
+        self._seed_games_for_advanced_filters()
+
+        all_games = self.client.get("/api/count?username=me&time_classes=blitz,rapid,bullet,outros")
+        self.assertEqual(all_games.status_code, 200)
+        self.assertEqual(all_games.get_json()["count"], 4)
+
+        others_only = self.client.get("/api/count?username=me&time_classes=outros")
+        self.assertEqual(others_only.status_code, 200)
+        self.assertEqual(others_only.get_json()["count"], 1)
+
+        no_timeout = self.client.get(
+            "/api/count?username=me&time_classes=blitz,rapid,bullet,outros&ignore_timeout_losses=1"
+        )
+        self.assertEqual(no_timeout.status_code, 200)
+        self.assertEqual(no_timeout.get_json()["count"], 2)
+
     def test_api_game_not_found_and_found(self):
         missing = self.client.get("/api/game/not-found")
         self.assertEqual(missing.status_code, 404)
@@ -392,6 +546,20 @@ class AppTests(unittest.TestCase):
         self.assertEqual(valid.status_code, 200)
         self.assertIn("fen", valid.get_json())
 
+    def test_frontend_javascript_has_valid_syntax(self):
+        node_path = shutil.which("node")
+        if not node_path:
+            self.skipTest("node não disponível")
+
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [node_path, "--check", str(root / "static" / "app.js")],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_frontend_artifacts_are_present_and_wired(self):
         root = Path(__file__).resolve().parents[1]
         template = (root / "templates" / "index.html").read_text(encoding="utf-8")
@@ -405,6 +573,11 @@ class AppTests(unittest.TestCase):
         self.assertIn('id="db-count"', template)
         self.assertIn('id="app-version"', template)
         self.assertIn('id="color-filter"', template)
+        self.assertIn('id="color-filter-label"', template)
+        self.assertIn('id="auto-flip"', template)
+        self.assertIn('id="time-outros"', template)
+        self.assertIn('id="ignore-timeout-losses"', template)
+        self.assertIn('id="filtered-count"', template)
         self.assertIn("ChessEdu", template)
         self.assertNotIn("Chess.com Opening Explorer", template)
         self.assertNotIn("Entenda seus erros de abertura", template)
@@ -417,6 +590,8 @@ class AppTests(unittest.TestCase):
         self.assertIn('id="replay-prev"', template)
         self.assertIn('id="replay-next"', template)
         self.assertIn('id="replay-last"', template)
+        self.assertIn('id="reset-btn">|&lt;<', template)
+        self.assertIn('id="back-btn">&lt;<', template)
         self.assertIn("moves-toolbar", template)
         self.assertIn("vendor/chessboardjs/chessboard-1.0.0.min.css", template)
         self.assertIn("vendor/chessjs/chess.min.js", template)
@@ -425,13 +600,23 @@ class AppTests(unittest.TestCase):
         self.assertIn("function doSync()", script)
         self.assertIn("function setSyncLoading(isLoading)", script)
         self.assertIn("function updateVersion(version)", script)
+        self.assertIn("function updateColorFilterLabel()", script)
+        self.assertIn("function refreshFilteredCount()", script)
+        self.assertIn("function applyBoardOrientation()", script)
         self.assertIn("function buildPlayerLabel(name, rating)", script)
         self.assertIn("function updateReplayButtons()", script)
         self.assertIn("function renderReplayPosition()", script)
+        self.assertIn("function formatMoveLabel(", script)
+        self.assertIn("game-result-win", script)
+        self.assertIn("game-result-loss", script)
+        self.assertIn("game-result-draw", script)
         self.assertIn("el.username.disabled = (data.game_count || 0) > 0", script)
         self.assertIn("let colorFilter = \"any\"", script)
+        self.assertIn("let selectedTimeClasses = new Set", script)
         self.assertIn("move-item", script)
         self.assertIn("colorFilter =", script)
+        self.assertIn("time_classes=", script)
+        self.assertIn("ignore_timeout_losses=", script)
         self.assertIn("await refreshFromPosition(true)", script)
         self.assertIn("Chessboard(\"board\"", script)
         self.assertIn("pieceTheme:", script)
@@ -449,6 +634,12 @@ class AppTests(unittest.TestCase):
         self.assertIn(".moves-toolbar", style)
         self.assertIn(".board-wrap", style)
         self.assertIn(".filter-block", style)
+        self.assertIn(".check-row", style)
+        self.assertIn(".filter-count", style)
+        self.assertIn(".game-result-win", style)
+        self.assertIn(".game-result-loss", style)
+        self.assertIn(".game-result-draw", style)
+        self.assertIn("--win-rate", style)
         self.assertIn(".move-item", style)
 
 

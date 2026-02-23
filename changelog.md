@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+- Filtros avançados no painel: ritmo com opção `outros`, opção para ignorar partidas com timeout, e contador total de partidas conforme filtros aplicados.
+- Robustez de carregamento de estado: quando há partidas no banco e o usuário salvo está ausente, o backend infere e preenche automaticamente o usuário mais frequente.
+- Correção de regressão no frontend por erro de sintaxe em `app.js`, agora coberta por teste dedicado de validação de sintaxe JavaScript.
+- Refinamentos visuais: numeração de lances (`n.` / `n...`), sombreado por percentual de vitórias na lista de lances, destaque de partidas por resultado (vitória/derrota/empate) e botões `|<`/`<` no painel de lances.
+
 ## 0.4.0
 - Frontend remodelado para layout em 3 painéis verticais (settings/filter, tabuleiro/partidas, lista de lances), ocupando quase toda a viewport.
 - Branding atualizado para `ChessEdu` com versão no cabeçalho e remoção do subtítulo.

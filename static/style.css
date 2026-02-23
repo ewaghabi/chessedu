@@ -61,7 +61,7 @@ header h1 {
   align-items: stretch;
 }
 
-input,
+input:not([type="checkbox"]),
 button {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -69,7 +69,7 @@ button {
   font-size: 0.95rem;
 }
 
-input {
+input:not([type="checkbox"]) {
   min-width: 220px;
 }
 
@@ -250,6 +250,39 @@ button:active {
   color: var(--muted);
 }
 
+.filter-title {
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.check-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.toggle-block {
+  margin-top: 14px;
+}
+
+.filter-count {
+  margin-top: 18px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #0f3f3b;
+}
+
 .panel h2 {
   margin-top: 0;
   font-size: 1.1rem;
@@ -298,11 +331,25 @@ button:active {
 
 .move-item {
   cursor: pointer;
+  --win-rate: 0%;
+  background-image: linear-gradient(
+    to right,
+    rgba(29, 78, 216, 0.12) 0%,
+    rgba(29, 78, 216, 0.12) var(--win-rate),
+    var(--surface-2) var(--win-rate),
+    var(--surface-2) 100%
+  );
 }
 
 .move-item:hover {
   border-color: #8fb8ff;
-  background: #eef4ff;
+  background-image: linear-gradient(
+    to right,
+    rgba(29, 78, 216, 0.18) 0%,
+    rgba(29, 78, 216, 0.18) var(--win-rate),
+    #eef4ff var(--win-rate),
+    #eef4ff 100%
+  );
 }
 
 .move-main {
@@ -318,6 +365,18 @@ button:active {
   font-size: 0.82rem;
   color: var(--muted);
   margin-left: 4px;
+}
+
+.game-result-win {
+  background: #eef4ff;
+}
+
+.game-result-loss {
+  background: #fff1f1;
+}
+
+.game-result-draw {
+  background: var(--surface-2);
 }
 
 .warning {

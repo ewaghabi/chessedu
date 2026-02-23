@@ -28,13 +28,49 @@
           </div>
 
           <div class="filter-block">
-            <label for="color-filter">Filtro de cor</label>
+            <label id="color-filter-label" for="color-filter">Jogador joga de:</label>
             <select id="color-filter">
               <option value="any">Tanto faz</option>
               <option value="white">Brancas</option>
               <option value="black">Pretas</option>
             </select>
           </div>
+
+          <div class="filter-block toggle-block">
+            <label class="check-row" for="auto-flip">
+              <input id="auto-flip" type="checkbox" />
+              <span>Inverter automaticamente o tabuleiro</span>
+            </label>
+          </div>
+
+          <div class="filter-block">
+            <span class="filter-title">Ritmo</span>
+            <label class="check-row" for="time-blitz">
+              <input id="time-blitz" type="checkbox" checked />
+              <span>Blitz</span>
+            </label>
+            <label class="check-row" for="time-rapid">
+              <input id="time-rapid" type="checkbox" checked />
+              <span>Rapid</span>
+            </label>
+            <label class="check-row" for="time-bullet">
+              <input id="time-bullet" type="checkbox" checked />
+              <span>Bullet</span>
+            </label>
+            <label class="check-row" for="time-outros">
+              <input id="time-outros" type="checkbox" checked />
+              <span>Outros</span>
+            </label>
+          </div>
+
+          <div class="filter-block toggle-block">
+            <label class="check-row" for="ignore-timeout-losses">
+              <input id="ignore-timeout-losses" type="checkbox" />
+              <span>Ignorar derrotas por tempo</span>
+            </label>
+          </div>
+
+          <div id="filtered-count" class="filter-count">Partidas com filtros: 0</div>
         </aside>
 
         <div class="panel board-panel">
@@ -56,8 +92,8 @@
         <div class="panel moves-panel">
           <div class="moves-toolbar">
             <div class="moves-toolbar-left">
-              <button id="reset-btn">Início</button>
-              <button id="back-btn">Voltar lance</button>
+              <button id="reset-btn">|&lt;</button>
+              <button id="back-btn">&lt;</button>
             </div>
           </div>
           <div id="moves-list" class="list"></div>
