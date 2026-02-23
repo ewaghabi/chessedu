@@ -152,6 +152,13 @@ def parse_game_and_index(game_id: str, pgn_text: str) -> list[tuple[int, str, st
     return positions
 
 
+def pgn_headers(pgn_text: str) -> dict[str, str]:
+    parsed_game = chess.pgn.read_game(io.StringIO(pgn_text))
+    if parsed_game is None:
+        return {}
+    return dict(parsed_game.headers)
+
+
 def upsert_game(conn: sqlite3.Connection, game: dict[str, Any]) -> bool:
     game_id = game_id_from_payload(game)
     pgn = game.get("pgn")
@@ -241,6 +248,48 @@ def fen_from_move_list(moves_uci: list[str]) -> str:
     return board.fen()
 
 
+def validate_color_filter(value: str) -> str:
+    color = (value or "any").strip().lower()
+    if color not in {"any", "white", "black"}:
+        raise ValueError("Parâmetro color inválido. Use: any, white, black.")
+    return color
+
+
+def result_label(white_result: str | None, black_result: str | None) -> str:
+    white = (white_result or "").strip().lower()
+    black = (black_result or "").strip().lower()
+
+    draw_tags = {"agreed", "repetition", "stalemate", "timevsinsufficient", "insufficient", "50move"}
+    white_loses = {"resigned", "timeout", "checkmated", "abandoned", "lose"}
+    black_loses = {"resigned", "timeout", "checkmated", "abandoned", "lose"}
+
+    if white == "win":
+        score = "1-0"
+    elif black == "win":
+        score = "0-1"
+    elif white in draw_tags or black in draw_tags:
+        score = "1/2-1/2"
+    elif white in white_loses:
+        score = "0-1"
+    elif black in black_loses:
+        score = "1-0"
+    else:
+        score = "1/2-1/2"
+
+    if "repetition" in {white, black}:
+        reason = "repetition"
+    elif "50move" in {white, black}:
+        reason = "50-move"
+    elif "stalemate" in {white, black}:
+        reason = "stalemate"
+    elif "timeout" in {white, black} or "timevsinsufficient" in {white, black}:
+        reason = "time"
+    else:
+        reason = "resigned"
+
+    return f"{score} ({reason})"
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -327,13 +376,22 @@ def api_sync():
 def api_stats():
     username = request.args.get("username", "").strip().lower()
     fen = request.args.get("fen", "").strip()
+    color = request.args.get("color", "any")
 
     if not username or not fen:
         return jsonify({"error": "Parâmetros obrigatórios: username e fen."}), 400
+    try:
+        color_filter = validate_color_filter(color)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
-    with closing(db_conn()) as conn:
-        rows = conn.execute(
-            """
+    color_condition = ""
+    if color_filter == "white":
+        color_condition = " AND g.white = ?"
+    elif color_filter == "black":
+        color_condition = " AND g.black = ?"
+
+    query = f"""
             SELECT
                 p.move_san,
                 p.move_uci,
@@ -348,11 +406,16 @@ def api_stats():
             JOIN games g ON g.id = p.game_id
             WHERE p.fen = ?
               AND (g.white = ? OR g.black = ?)
+              {color_condition}
             GROUP BY p.move_san, p.move_uci
             ORDER BY games_count DESC, win_rate DESC
-            """,
-            (username, username, fen, username, username),
-        ).fetchall()
+            """
+    params = [username, username, fen, username, username]
+    if color_filter != "any":
+        params.append(username)
+
+    with closing(db_conn()) as conn:
+        rows = conn.execute(query, params).fetchall()
 
     stats = [
         {
@@ -370,13 +433,22 @@ def api_stats():
 def api_games():
     username = request.args.get("username", "").strip().lower()
     fen = request.args.get("fen", "").strip()
+    color = request.args.get("color", "any")
 
     if not username or not fen:
         return jsonify({"error": "Parâmetros obrigatórios: username e fen."}), 400
+    try:
+        color_filter = validate_color_filter(color)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
-    with closing(db_conn()) as conn:
-        rows = conn.execute(
-            """
+    color_condition = ""
+    if color_filter == "white":
+        color_condition = " AND g.white = ?"
+    elif color_filter == "black":
+        color_condition = " AND g.black = ?"
+
+    query = f"""
             SELECT DISTINCT
                 g.id,
                 g.url,
@@ -390,11 +462,16 @@ def api_games():
             JOIN games g ON g.id = p.game_id
             WHERE p.fen = ?
               AND (g.white = ? OR g.black = ?)
+              {color_condition}
             ORDER BY g.end_time DESC
             LIMIT 250
-            """,
-            (fen, username, username),
-        ).fetchall()
+            """
+    params = [fen, username, username]
+    if color_filter != "any":
+        params.append(username)
+
+    with closing(db_conn()) as conn:
+        rows = conn.execute(query, params).fetchall()
 
     games = []
     for row in rows:
@@ -409,6 +486,7 @@ def api_games():
                 "black": row["black"],
                 "time_class": row["time_class"],
                 "my_result": my_result,
+                "result_label": result_label(row["white_result"], row["black_result"]),
             }
         )
 
@@ -419,19 +497,30 @@ def api_games():
 def api_game(game_id: str):
     with closing(db_conn()) as conn:
         row = conn.execute(
-            "SELECT id, url, white, black, end_time, pgn FROM games WHERE id = ?", (game_id,)
+            """
+            SELECT id, url, white, black, end_time, pgn, time_class, white_result, black_result
+            FROM games WHERE id = ?
+            """,
+            (game_id,),
         ).fetchone()
 
     if not row:
         return jsonify({"error": "Partida não encontrada."}), 404
 
+    headers = pgn_headers(row["pgn"])
     return jsonify(
         {
             "id": row["id"],
             "url": row["url"],
             "white": row["white"],
             "black": row["black"],
+            "white_rating": headers.get("WhiteElo"),
+            "black_rating": headers.get("BlackElo"),
             "end_time": row["end_time"],
+            "time_class": row["time_class"],
+            "white_result": row["white_result"],
+            "black_result": row["black_result"],
+            "result_label": result_label(row["white_result"], row["black_result"]),
             "pgn": row["pgn"],
         }
     )

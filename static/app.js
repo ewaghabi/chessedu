@@ -4,19 +4,29 @@ let game = null;
 let board = null;
 let username = "";
 let currentMoves = [];
+let colorFilter = "any";
+let loadedGameMoves = null;
+let replayIndex = 0;
 
 const el = {
   username: document.getElementById("username"),
   syncBtn: document.getElementById("sync-btn"),
   resetBtn: document.getElementById("reset-btn"),
   backBtn: document.getElementById("back-btn"),
-  gamesBtn: document.getElementById("games-btn"),
+  replayFirst: document.getElementById("replay-first"),
+  replayPrev: document.getElementById("replay-prev"),
+  replayNext: document.getElementById("replay-next"),
+  replayLast: document.getElementById("replay-last"),
+  colorFilter: document.getElementById("color-filter"),
   dbCount: document.getElementById("db-count"),
   appVersion: document.getElementById("app-version"),
   status: document.getElementById("status"),
   movesList: document.getElementById("moves-list"),
   gamesList: document.getElementById("games-list"),
   positionInfo: document.getElementById("position-info"),
+  gameMeta: document.getElementById("game-meta"),
+  playerTop: document.getElementById("player-top"),
+  playerBottom: document.getElementById("player-bottom"),
 };
 
 function setStatus(text, mode = "info") {
@@ -47,6 +57,35 @@ function setPositionInfo() {
   el.positionInfo.textContent = `Ply: ${currentMoves.length} | Vez: ${side}`;
 }
 
+function updateReplayButtons() {
+  const hasLoadedGame = Array.isArray(loadedGameMoves) && loadedGameMoves.length > 0;
+  el.replayFirst.disabled = !hasLoadedGame || replayIndex <= 0;
+  el.replayPrev.disabled = !hasLoadedGame || replayIndex <= 0;
+  el.replayNext.disabled = !hasLoadedGame || replayIndex >= loadedGameMoves.length;
+  el.replayLast.disabled = !hasLoadedGame || replayIndex >= loadedGameMoves.length;
+}
+
+function clearReplayState() {
+  loadedGameMoves = null;
+  replayIndex = 0;
+  updateReplayButtons();
+  el.gameMeta.textContent = "";
+  el.playerTop.textContent = "-";
+  el.playerBottom.textContent = "-";
+}
+
+function renderReplayPosition() {
+  if (!game || !board || !Array.isArray(loadedGameMoves)) return;
+
+  game.reset();
+  for (let i = 0; i < replayIndex; i += 1) {
+    game.move(loadedGameMoves[i], { sloppy: true });
+  }
+  board.position(game.fen());
+  setPositionInfo();
+  updateReplayButtons();
+}
+
 async function apiJson(url, options = {}) {
   const resp = await fetch(url, options);
   const raw = await resp.text();
@@ -68,6 +107,7 @@ async function loadState(updateStatus = true) {
     username = data.username;
     el.username.value = data.username;
   }
+  el.username.disabled = (data.game_count || 0) > 0;
   updateVersion(data.version);
   updateDbCount(data.game_count || 0);
   if (updateStatus) {
@@ -77,6 +117,7 @@ async function loadState(updateStatus = true) {
 
 function resetBoard() {
   if (!game || !board) return;
+  clearReplayState();
   game.reset();
   currentMoves = [];
   board.position(game.fen());
@@ -101,34 +142,40 @@ function renderMoves(moves) {
 
   for (const m of moves) {
     const item = document.createElement("div");
-    item.className = "item";
+    item.className = "item move-item";
+    item.setAttribute("role", "button");
+    item.setAttribute("tabindex", "0");
 
-    const left = document.createElement("div");
-    left.className = "left";
+    const moveMain = document.createElement("div");
+    moveMain.className = "move-main";
+    moveMain.textContent = m.san;
 
-    const title = document.createElement("div");
-    title.className = "title";
-    title.textContent = m.san;
+    const moveStats = document.createElement("div");
+    moveStats.className = "move-stats";
+    moveStats.textContent = `${m.win_rate}%`;
 
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    meta.textContent = `${m.games} partidas | ${m.win_rate}% vitórias`;
+    const gamesCount = document.createElement("span");
+    gamesCount.className = "move-games";
+    gamesCount.textContent = `(${m.games})`;
+    moveStats.appendChild(gamesCount);
 
-    left.appendChild(title);
-    left.appendChild(meta);
-
-    const btn = document.createElement("button");
-    btn.textContent = "Entrar";
-    btn.addEventListener("click", async () => {
+    const goToMove = async () => {
       const move = game.move(m.uci, { sloppy: true });
       if (!move) return;
       currentMoves.push(m.uci);
       board.position(game.fen());
-      await refreshFromPosition();
+      await refreshFromPosition(true);
+    };
+    item.addEventListener("click", goToMove);
+    item.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        goToMove();
+      }
     });
 
-    item.appendChild(left);
-    item.appendChild(btn);
+    item.appendChild(moveMain);
+    item.appendChild(moveStats);
     el.movesList.appendChild(item);
   }
 }
@@ -136,6 +183,11 @@ function renderMoves(moves) {
 function formatDateFromUnix(ts) {
   if (!ts) return "Data desconhecida";
   return new Date(ts * 1000).toLocaleString();
+}
+
+function buildPlayerLabel(name, rating) {
+  if (!name) return "-";
+  return rating ? `${name} (${rating})` : name;
 }
 
 function renderGames(games) {
@@ -158,7 +210,7 @@ function renderGames(games) {
 
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.textContent = `${formatDateFromUnix(g.end_time)} | ${g.time_class || "?"} | resultado: ${g.my_result || "?"}`;
+    meta.textContent = `${formatDateFromUnix(g.end_time)} | ${g.time_class || "?"} | resultado: ${g.result_label || g.my_result || "?"}`;
 
     left.appendChild(title);
     left.appendChild(meta);
@@ -189,13 +241,23 @@ async function loadGame(gameId) {
 
     resetBoard();
     const history = replay.history({ verbose: true });
+    loadedGameMoves = [];
     for (const mv of history) {
+      const uci = mv.from + mv.to + (mv.promotion || "");
+      loadedGameMoves.push(uci);
       game.move(mv.san, { sloppy: true });
-      currentMoves.push(mv.from + mv.to + (mv.promotion || ""));
     }
 
+    replayIndex = loadedGameMoves.length;
     board.position(game.fen());
-    await refreshFromPosition();
+    el.playerTop.textContent = buildPlayerLabel(data.black, data.black_rating);
+    el.playerBottom.textContent = buildPlayerLabel(data.white, data.white_rating);
+    const metaDate = formatDateFromUnix(data.end_time);
+    const metaTimeClass = data.time_class || "?";
+    const metaResult = data.result_label || "?";
+    el.gameMeta.textContent = `${metaDate} | ${metaTimeClass} | ${metaResult}`;
+    setPositionInfo();
+    updateReplayButtons();
     setStatus(`Partida carregada: ${data.white} vs ${data.black}`, "success");
   } catch (err) {
     setStatus(err.message, "error");
@@ -219,13 +281,13 @@ async function refreshFromPosition(loadGames = false) {
     const fen = await getCurrentFen();
     board.position(fen);
     const statsData = await apiJson(
-      `/api/stats?username=${encodeURIComponent(username)}&fen=${encodeURIComponent(fen)}`
+      `/api/stats?username=${encodeURIComponent(username)}&fen=${encodeURIComponent(fen)}&color=${encodeURIComponent(colorFilter)}`
     );
     renderMoves(statsData.moves);
 
     if (loadGames) {
       const gamesData = await apiJson(
-        `/api/games?username=${encodeURIComponent(username)}&fen=${encodeURIComponent(fen)}`
+        `/api/games?username=${encodeURIComponent(username)}&fen=${encodeURIComponent(fen)}&color=${encodeURIComponent(colorFilter)}`
       );
       renderGames(gamesData.games);
     }
@@ -285,8 +347,33 @@ function wireEvents() {
     await refreshFromPosition();
   });
 
-  el.gamesBtn.addEventListener("click", async () => {
+  el.colorFilter.addEventListener("change", async () => {
+    colorFilter = el.colorFilter.value;
     await refreshFromPosition(true);
+  });
+
+  el.replayFirst.addEventListener("click", () => {
+    if (!loadedGameMoves) return;
+    replayIndex = 0;
+    renderReplayPosition();
+  });
+
+  el.replayPrev.addEventListener("click", () => {
+    if (!loadedGameMoves || replayIndex <= 0) return;
+    replayIndex -= 1;
+    renderReplayPosition();
+  });
+
+  el.replayNext.addEventListener("click", () => {
+    if (!loadedGameMoves || replayIndex >= loadedGameMoves.length) return;
+    replayIndex += 1;
+    renderReplayPosition();
+  });
+
+  el.replayLast.addEventListener("click", () => {
+    if (!loadedGameMoves) return;
+    replayIndex = loadedGameMoves.length;
+    renderReplayPosition();
   });
 }
 
@@ -321,6 +408,7 @@ async function main() {
     });
 
     setPositionInfo();
+    updateReplayButtons();
     await loadState(true);
     await refreshFromPosition();
   } catch (err) {

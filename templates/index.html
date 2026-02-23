@@ -30,17 +30,34 @@
 
       <section class="layout">
         <div class="board-area">
+          <div id="game-meta" class="game-meta"></div>
+          <div id="player-top" class="player-tag">-</div>
           <div id="board"></div>
-          <div class="board-actions">
-            <button id="reset-btn">Início</button>
-            <button id="back-btn">Voltar lance</button>
-            <button id="games-btn">Ver partidas desta posição</button>
+          <div id="player-bottom" class="player-tag">-</div>
+          <div class="replay-actions">
+            <button id="replay-first" type="button" disabled>|&lt;</button>
+            <button id="replay-prev" type="button" disabled>&lt;</button>
+            <button id="replay-next" type="button" disabled>&gt;</button>
+            <button id="replay-last" type="button" disabled>&gt;|</button>
           </div>
           <p id="position-info"></p>
         </div>
 
         <div class="panel">
-          <h2>Próximos lances</h2>
+          <div class="moves-toolbar">
+            <div class="moves-toolbar-left">
+              <button id="reset-btn">Início</button>
+              <button id="back-btn">Voltar lance</button>
+            </div>
+            <div class="moves-toolbar-right">
+              <label for="color-filter">Filtro</label>
+              <select id="color-filter">
+                <option value="any">Tanto faz</option>
+                <option value="white">Brancas</option>
+                <option value="black">Pretas</option>
+              </select>
+            </div>
+          </div>
           <div id="moves-list" class="list"></div>
         </div>
       </section>

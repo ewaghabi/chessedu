@@ -138,6 +138,14 @@ class AppTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             app_module.fen_from_move_list(["e2e5"])
 
+    def test_validate_color_filter(self):
+        self.assertEqual(app_module.validate_color_filter("any"), "any")
+        self.assertEqual(app_module.validate_color_filter("white"), "white")
+        self.assertEqual(app_module.validate_color_filter("black"), "black")
+        self.assertEqual(app_module.validate_color_filter("  WHITE "), "white")
+        with self.assertRaises(ValueError):
+            app_module.validate_color_filter("blue")
+
     def test_settings_helpers_roundtrip(self):
         with sqlite3.connect(app_module.DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
@@ -290,6 +298,27 @@ class AppTests(unittest.TestCase):
         self.assertEqual(moves["e2e4"]["win_rate"], 100.0)
         self.assertEqual(moves["d2d4"]["win_rate"], 100.0)
 
+    def test_api_stats_color_filter_white_black_any_and_invalid(self):
+        self._seed_two_games_for_stats()
+        start_fen = chess.Board().fen()
+
+        any_resp = self.client.get(f"/api/stats?username=me&fen={start_fen}&color=any")
+        white_resp = self.client.get(f"/api/stats?username=me&fen={start_fen}&color=white")
+        black_resp = self.client.get(f"/api/stats?username=me&fen={start_fen}&color=black")
+        invalid_resp = self.client.get(f"/api/stats?username=me&fen={start_fen}&color=invalid")
+
+        self.assertEqual(any_resp.status_code, 200)
+        self.assertEqual(white_resp.status_code, 200)
+        self.assertEqual(black_resp.status_code, 200)
+        self.assertEqual(invalid_resp.status_code, 400)
+
+        any_moves = {m["uci"] for m in any_resp.get_json()["moves"]}
+        white_moves = {m["uci"] for m in white_resp.get_json()["moves"]}
+        black_moves = {m["uci"] for m in black_resp.get_json()["moves"]}
+        self.assertEqual(any_moves, {"e2e4", "d2d4"})
+        self.assertEqual(white_moves, {"e2e4"})
+        self.assertEqual(black_moves, {"d2d4"})
+
     def test_api_games_requires_params(self):
         response = self.client.get("/api/games")
         self.assertEqual(response.status_code, 400)
@@ -306,6 +335,30 @@ class AppTests(unittest.TestCase):
         result_by_id = {g["id"]: g["my_result"] for g in games}
         self.assertEqual(result_by_id["g1"], "win")
         self.assertEqual(result_by_id["g2"], "win")
+        label_by_id = {g["id"]: g["result_label"] for g in games}
+        self.assertEqual(label_by_id["g1"], "1-0 (resigned)")
+        self.assertEqual(label_by_id["g2"], "0-1 (resigned)")
+
+    def test_api_games_color_filter_white_black_any_and_invalid(self):
+        self._seed_two_games_for_stats()
+        start_fen = chess.Board().fen()
+
+        any_resp = self.client.get(f"/api/games?username=me&fen={start_fen}&color=any")
+        white_resp = self.client.get(f"/api/games?username=me&fen={start_fen}&color=white")
+        black_resp = self.client.get(f"/api/games?username=me&fen={start_fen}&color=black")
+        invalid_resp = self.client.get(f"/api/games?username=me&fen={start_fen}&color=invalid")
+
+        self.assertEqual(any_resp.status_code, 200)
+        self.assertEqual(white_resp.status_code, 200)
+        self.assertEqual(black_resp.status_code, 200)
+        self.assertEqual(invalid_resp.status_code, 400)
+
+        any_ids = {g["id"] for g in any_resp.get_json()["games"]}
+        white_ids = {g["id"] for g in white_resp.get_json()["games"]}
+        black_ids = {g["id"] for g in black_resp.get_json()["games"]}
+        self.assertEqual(any_ids, {"g1", "g2"})
+        self.assertEqual(white_ids, {"g1"})
+        self.assertEqual(black_ids, {"g2"})
 
     def test_api_game_not_found_and_found(self):
         missing = self.client.get("/api/game/not-found")
@@ -320,6 +373,13 @@ class AppTests(unittest.TestCase):
         payload = found.get_json()
         self.assertEqual(payload["id"], "g100")
         self.assertIn("pgn", payload)
+        self.assertIn("time_class", payload)
+        self.assertIn("white_result", payload)
+        self.assertIn("black_result", payload)
+        self.assertIn("white_rating", payload)
+        self.assertIn("black_rating", payload)
+        self.assertIn("result_label", payload)
+        self.assertEqual(payload["result_label"], "1-0 (resigned)")
 
     def test_api_fen_validates_input_and_returns_fen(self):
         invalid_type = self.client.post("/api/fen", json={"moves": "e2e4"})
@@ -344,6 +404,16 @@ class AppTests(unittest.TestCase):
         self.assertIn('class="status-message"', template)
         self.assertIn('id="db-count"', template)
         self.assertIn('id="app-version"', template)
+        self.assertIn('id="color-filter"', template)
+        self.assertNotIn('id="games-btn"', template)
+        self.assertIn('id="game-meta"', template)
+        self.assertIn('id="player-top"', template)
+        self.assertIn('id="player-bottom"', template)
+        self.assertIn('id="replay-first"', template)
+        self.assertIn('id="replay-prev"', template)
+        self.assertIn('id="replay-next"', template)
+        self.assertIn('id="replay-last"', template)
+        self.assertIn("moves-toolbar", template)
         self.assertIn("vendor/chessboardjs/chessboard-1.0.0.min.css", template)
         self.assertIn("vendor/chessjs/chess.min.js", template)
         self.assertIn("vendor/jquery/jquery-3.7.1.min.js", template)
@@ -351,6 +421,14 @@ class AppTests(unittest.TestCase):
         self.assertIn("function doSync()", script)
         self.assertIn("function setSyncLoading(isLoading)", script)
         self.assertIn("function updateVersion(version)", script)
+        self.assertIn("function buildPlayerLabel(name, rating)", script)
+        self.assertIn("function updateReplayButtons()", script)
+        self.assertIn("function renderReplayPosition()", script)
+        self.assertIn("el.username.disabled = (data.game_count || 0) > 0", script)
+        self.assertIn("let colorFilter = \"any\"", script)
+        self.assertIn("move-item", script)
+        self.assertIn("colorFilter =", script)
+        self.assertIn("await refreshFromPosition(true)", script)
         self.assertIn("Chessboard(\"board\"", script)
         self.assertIn("pieceTheme:", script)
         self.assertIn("window.addEventListener(\"error\"", script)
@@ -361,6 +439,11 @@ class AppTests(unittest.TestCase):
         self.assertIn(".btn-spinner", style)
         self.assertIn(".status-message.success", style)
         self.assertIn(".app-version", style)
+        self.assertIn(".game-meta", style)
+        self.assertIn(".player-tag", style)
+        self.assertIn(".replay-actions", style)
+        self.assertIn(".moves-toolbar", style)
+        self.assertIn(".move-item", style)
 
 
 if __name__ == "__main__":
