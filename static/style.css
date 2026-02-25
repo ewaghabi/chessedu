@@ -554,10 +554,11 @@ button:active {
   background: #6b7280;
 }
 
-.problem-debug-row {
+.problem-tools-row {
   margin-top: 6px;
   display: flex;
-  justify-content: flex-start;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .problem-debug-btn {
@@ -569,6 +570,59 @@ button:active {
   color: #0f172a;
   font-size: 0.9rem;
   line-height: 1;
+}
+
+.problem-delete-btn {
+  min-width: 36px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid #fecaca;
+  background: #fee2e2;
+  color: #991b1b;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.problem-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.58);
+  padding: 16px;
+}
+
+.problem-confirm-overlay.hidden {
+  display: none;
+}
+
+.problem-confirm-modal {
+  width: min(360px, 92vw);
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.2);
+}
+
+.problem-confirm-modal h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.problem-confirm-modal p {
+  margin: 10px 0 0;
+  color: #334155;
+  font-size: 0.9rem;
+}
+
+.problem-confirm-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 @media (max-width: 900px) {

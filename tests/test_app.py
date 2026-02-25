@@ -759,6 +759,64 @@ class AppTests(unittest.TestCase):
             next(item for item in payload["problems"] if item["game_id"] == "g_timeout_black")["black_rating"]
         )
 
+    def test_api_delete_problem_handles_missing_and_success(self):
+        self._seed_games_for_advanced_filters()
+
+        missing_table = self.client.delete("/api/problems/1")
+        self.assertEqual(missing_table.status_code, 404)
+
+        with app_module.db_conn() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS problem_positions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    game_id TEXT NOT NULL,
+                    ply INTEGER NOT NULL,
+                    fen TEXT NOT NULL,
+                    side_to_move TEXT NOT NULL,
+                    pv_move_uci TEXT NOT NULL,
+                    pv_line_uci TEXT,
+                    pv_line_san TEXT,
+                    eval_pv_final REAL,
+                    eval_prev REAL NOT NULL,
+                    eval_curr REAL NOT NULL,
+                    eval_delta REAL NOT NULL,
+                    eval_time_tenths INTEGER NOT NULL,
+                    eval_delta_tenths INTEGER NOT NULL,
+                    presented_count INTEGER NOT NULL DEFAULT 0,
+                    correct_count INTEGER NOT NULL DEFAULT 0,
+                    avg_correct_time_ms REAL NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO problem_positions (
+                    game_id, ply, fen, side_to_move, pv_move_uci, pv_line_uci, pv_line_san,
+                    eval_prev, eval_curr, eval_delta, eval_time_tenths, eval_delta_tenths, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("g_blitz", 1, chess.Board().fen(), "w", "e2e4", "e2e4", "1. e4", 0.0, 3.5, 3.5, 10, 30, 1700000101),
+            )
+            conn.commit()
+            inserted_id = conn.execute("SELECT id FROM problem_positions LIMIT 1").fetchone()["id"]
+
+        not_found = self.client.delete("/api/problems/999999")
+        self.assertEqual(not_found.status_code, 404)
+
+        deleted = self.client.delete(f"/api/problems/{inserted_id}")
+        self.assertEqual(deleted.status_code, 200)
+        payload = deleted.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["problem_id"], inserted_id)
+        self.assertEqual(payload["game_id"], "g_blitz")
+
+        with app_module.db_conn() as conn:
+            count = conn.execute("SELECT COUNT(*) AS n FROM problem_positions").fetchone()["n"]
+        self.assertEqual(count, 0)
+
     def test_api_game_not_found_and_found(self):
         missing = self.client.get("/api/game/not-found")
         self.assertEqual(missing.status_code, 404)
@@ -831,6 +889,10 @@ class AppTests(unittest.TestCase):
         self.assertIn('id="problem-next-btn"', template)
         self.assertIn('id="problem-repeat-btn"', template)
         self.assertIn('id="problem-skip-btn"', template)
+        self.assertIn('id="problem-delete-btn"', template)
+        self.assertIn('id="problem-delete-confirm-overlay"', template)
+        self.assertIn('id="problem-delete-confirm-btn"', template)
+        self.assertIn('id="problem-delete-cancel-btn"', template)
         self.assertIn("ChessEdu", template)
         self.assertNotIn("Chess.com Opening Explorer", template)
         self.assertNotIn("Entenda seus erros de abertura", template)
@@ -865,6 +927,8 @@ class AppTests(unittest.TestCase):
         self.assertIn("function showNextProblem()", script)
         self.assertIn("function repeatCurrentProblem()", script)
         self.assertIn("function closeProblemModal()", script)
+        self.assertIn("function deleteCurrentProblem()", script)
+        self.assertIn("function openProblemDeleteConfirm()", script)
         self.assertIn("function ensureProblemBoardVisible()", script)
         self.assertIn("startProblemTimer()", script)
         self.assertIn("stopProblemTimer()", script)
@@ -908,6 +972,9 @@ class AppTests(unittest.TestCase):
         self.assertIn(".problem-btn-success", style)
         self.assertIn(".problem-btn-danger", style)
         self.assertIn(".problem-btn-neutral", style)
+        self.assertIn(".problem-delete-btn", style)
+        self.assertIn(".problem-confirm-overlay", style)
+        self.assertIn(".problem-confirm-modal", style)
         self.assertIn(".game-result-win", style)
         self.assertIn(".game-result-loss", style)
         self.assertIn(".game-result-draw", style)

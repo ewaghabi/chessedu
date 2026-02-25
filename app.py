@@ -732,6 +732,29 @@ def api_problems():
     return jsonify({"username": username, "total": len(problems), "problems": problems})
 
 
+@app.delete("/api/problems/<int:problem_id>")
+def api_delete_problem(problem_id: int):
+    with closing(db_conn()) as conn:
+        if not table_exists(conn, "problem_positions"):
+            return jsonify({"error": "Tabela de problemas não encontrada."}), 404
+
+        row = conn.execute(
+            """
+            SELECT id, game_id
+            FROM problem_positions
+            WHERE id = ?
+            """,
+            (problem_id,),
+        ).fetchone()
+        if row is None:
+            return jsonify({"error": "Problema não encontrado."}), 404
+
+        conn.execute("DELETE FROM problem_positions WHERE id = ?", (problem_id,))
+        conn.commit()
+
+    return jsonify({"ok": True, "problem_id": problem_id, "game_id": row["game_id"]})
+
+
 @app.get("/api/game/<game_id>")
 def api_game(game_id: str):
     with closing(db_conn()) as conn:

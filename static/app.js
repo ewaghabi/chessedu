@@ -23,6 +23,7 @@ let problemSession = {
   locked: true,
   debugHoldActive: false,
   debugRestore: null,
+  deletingProblem: false,
 };
 let problemDragPieceCode = null;
 
@@ -69,7 +70,11 @@ const el = {
   problemRepeatBtn: document.getElementById("problem-repeat-btn"),
   problemShowSolutionBtn: document.getElementById("problem-show-solution-btn"),
   problemDebugHoldBtn: document.getElementById("problem-debug-hold-btn"),
+  problemDeleteBtn: document.getElementById("problem-delete-btn"),
   problemSkipBtn: document.getElementById("problem-skip-btn"),
+  problemDeleteConfirmOverlay: document.getElementById("problem-delete-confirm-overlay"),
+  problemDeleteCancelBtn: document.getElementById("problem-delete-cancel-btn"),
+  problemDeleteConfirmBtn: document.getElementById("problem-delete-confirm-btn"),
 };
 
 function setStatus(text, mode = "info") {
@@ -442,6 +447,62 @@ function buildProblemSolutionText(problem) {
   return `PV: ${pvLine} | Eval final: ${finalEval}`;
 }
 
+function isProblemDeleteConfirmOpen() {
+  return !el.problemDeleteConfirmOverlay.classList.contains("hidden");
+}
+
+function setProblemDeleteButtonEnabled(enabled) {
+  el.problemDeleteBtn.disabled = !enabled;
+}
+
+function openProblemDeleteConfirm() {
+  if (!problemSession.current || isProblemDeleteConfirmOpen()) {
+    return;
+  }
+  el.problemDeleteConfirmOverlay.classList.remove("hidden");
+}
+
+function closeProblemDeleteConfirm() {
+  el.problemDeleteConfirmOverlay.classList.add("hidden");
+}
+
+async function deleteCurrentProblem() {
+  if (!problemSession.current || problemSession.deletingProblem) {
+    return;
+  }
+  const currentProblemId = problemSession.current.problem_id;
+  if (!currentProblemId) {
+    closeProblemDeleteConfirm();
+    return;
+  }
+
+  problemSession.deletingProblem = true;
+  el.problemDeleteConfirmBtn.disabled = true;
+  try {
+    await apiJson(`/api/problems/${encodeURIComponent(currentProblemId)}`, { method: "DELETE" });
+    closeProblemDeleteConfirm();
+    hideProblemDebugHoldInfo();
+
+    problemSession.problems = problemSession.problems.filter((item) => item.problem_id !== currentProblemId);
+    await refreshFilteredCount();
+
+    if (!problemSession.problems.length) {
+      closeProblemModal();
+      setStatus("Problema excluído. Não há mais problemas nos filtros atuais.", "success");
+      return;
+    }
+
+    buildProblemQueue();
+    showNextProblem();
+    setStatus("Problema excluído com sucesso.", "success");
+  } catch (err) {
+    setStatus(err.message, "error");
+  } finally {
+    problemSession.deletingProblem = false;
+    el.problemDeleteConfirmBtn.disabled = false;
+  }
+}
+
 function setProblemActionButtons({ showNext = false, showRepeat = false, showSolution = false } = {}) {
   el.problemNextBtn.classList.toggle("hidden", !showNext);
   el.problemRepeatBtn.classList.toggle("hidden", !showRepeat);
@@ -509,6 +570,7 @@ function showNextProblem() {
   setProblemFeedback(buildProblemPrompt(problemSession.current), "info");
   setProblemActionButtons({ showNext: false, showRepeat: false, showSolution: false });
   setProblemEvalRowHidden(true);
+  setProblemDeleteButtonEnabled(true);
   startProblemTimer();
 }
 
@@ -523,6 +585,7 @@ function repeatCurrentProblem() {
   setProblemFeedback(buildProblemPrompt(problemSession.current), "info");
   setProblemActionButtons({ showNext: false, showRepeat: false, showSolution: false });
   setProblemEvalRowHidden(true);
+  setProblemDeleteButtonEnabled(true);
   startProblemTimer();
 }
 
@@ -533,6 +596,7 @@ function openProblemModal() {
 
 function closeProblemModal() {
   hideProblemDebugHoldInfo();
+  closeProblemDeleteConfirm();
   stopProblemTimer();
   resetProblemCursor();
   problemDragPieceCode = null;
@@ -542,6 +606,7 @@ function closeProblemModal() {
   setProblemFeedback("Faça o melhor lance da posição.", "info");
   setProblemActionButtons({ showNext: false, showRepeat: false, showSolution: false });
   setProblemEvalRowHidden(true);
+  setProblemDeleteButtonEnabled(false);
 }
 
 async function openProblemsSession() {
@@ -559,6 +624,7 @@ async function openProblemsSession() {
   problemSession.problems = data.problems;
   buildProblemQueue();
   openProblemModal();
+  setProblemDeleteButtonEnabled(false);
   showNextProblem();
 }
 
@@ -807,7 +873,14 @@ function wireEvents() {
     }
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !el.problemModalOverlay.classList.contains("hidden")) {
+    if (event.key !== "Escape") {
+      return;
+    }
+    if (isProblemDeleteConfirmOpen()) {
+      closeProblemDeleteConfirm();
+      return;
+    }
+    if (!el.problemModalOverlay.classList.contains("hidden")) {
       closeProblemModal();
     }
   });
@@ -834,6 +907,16 @@ function wireEvents() {
   el.problemDebugHoldBtn.addEventListener("pointercancel", stopDebugHold);
   document.addEventListener("pointerup", stopDebugHold);
   el.problemSkipBtn.addEventListener("click", showNextProblem);
+  el.problemDeleteBtn.addEventListener("click", openProblemDeleteConfirm);
+  el.problemDeleteCancelBtn.addEventListener("click", closeProblemDeleteConfirm);
+  el.problemDeleteConfirmBtn.addEventListener("click", async () => {
+    await deleteCurrentProblem();
+  });
+  el.problemDeleteConfirmOverlay.addEventListener("click", (event) => {
+    if (event.target === el.problemDeleteConfirmOverlay) {
+      closeProblemDeleteConfirm();
+    }
+  });
 
   el.syncBtn.addEventListener("click", doSync);
   el.resetBtn.addEventListener("click", async () => {

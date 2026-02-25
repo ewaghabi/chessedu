@@ -134,8 +134,19 @@
           <button id="problem-show-solution-btn" class="problem-btn-neutral hidden" type="button">Mostrar solução</button>
           <button id="problem-skip-btn" class="problem-btn-neutral" type="button">Pular problema</button>
         </div>
-        <div class="problem-debug-row">
+        <div class="problem-tools-row">
           <button id="problem-debug-hold-btn" class="problem-debug-btn" type="button" title="Segure para depurar">🔎🐞</button>
+          <button id="problem-delete-btn" class="problem-delete-btn" type="button" title="Excluir problema">🗑️</button>
+        </div>
+      </div>
+    </div>
+    <div id="problem-delete-confirm-overlay" class="problem-confirm-overlay hidden">
+      <div class="problem-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="problem-delete-confirm-title">
+        <h3 id="problem-delete-confirm-title">Excluir problema?</h3>
+        <p>Essa ação remove permanentemente este problema da base de problemas.</p>
+        <div class="problem-confirm-actions">
+          <button id="problem-delete-cancel-btn" class="problem-btn-neutral" type="button">Cancelar</button>
+          <button id="problem-delete-confirm-btn" class="problem-btn-danger" type="button">Excluir</button>
         </div>
       </div>
     </div>

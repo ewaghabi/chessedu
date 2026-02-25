@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.0
+- Modal de problemas ganhou ação de exclusão individual com botão de lixeira no canto inferior direito.
+- Exclusão protegida por modal de confirmação customizado (sem `alert`), com opções de cancelar ou confirmar.
+- Novo endpoint backend `DELETE /api/problems/<problem_id>` para remoção segura de problemas, com tratamento de erro para item inexistente/tabela ausente.
+- Fluxo da sessão atualizado após exclusão: remove o problema da fila atual, atualiza contagens e avança automaticamente para o próximo (ou encerra a sessão se não houver mais problemas).
+- Cobertura de testes ampliada para o endpoint de exclusão e para os novos artefatos/frontend do modal de confirmação.
+
 ## 0.9.0
 - Pipeline de geração de problemas unificado para usar os mesmos critérios da análise em tabela (`c1..c5`) como regra oficial de seleção.
 - Novo modo de debug direcionado por jogo: adicionado parâmetro `--game-id` no `problems.py` para processar somente uma partida específica.
