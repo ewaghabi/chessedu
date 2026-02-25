@@ -21,6 +21,8 @@ let problemSession = {
   timerId: null,
   startedAtMs: 0,
   locked: true,
+  debugHoldActive: false,
+  debugRestore: null,
 };
 let problemDragPieceCode = null;
 
@@ -60,9 +62,13 @@ const el = {
   problemPlayerBottom: document.getElementById("problem-player-bottom"),
   problemTimer: document.getElementById("problem-timer"),
   problemFeedback: document.getElementById("problem-feedback"),
+  problemEvalRow: document.getElementById("problem-eval-row"),
+  problemEvalPrev: document.getElementById("problem-eval-prev"),
+  problemEvalPost: document.getElementById("problem-eval-post"),
   problemNextBtn: document.getElementById("problem-next-btn"),
   problemRepeatBtn: document.getElementById("problem-repeat-btn"),
   problemShowSolutionBtn: document.getElementById("problem-show-solution-btn"),
+  problemDebugHoldBtn: document.getElementById("problem-debug-hold-btn"),
   problemSkipBtn: document.getElementById("problem-skip-btn"),
 };
 
@@ -314,6 +320,14 @@ function setProblemFeedback(text, mode = "") {
   el.problemFeedback.className = `problem-feedback ${mode}`.trim();
 }
 
+function truncateWithEllipsis(text, maxChars = 30) {
+  const value = String(text || "");
+  if (value.length <= maxChars) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(0, maxChars - 3))}...`;
+}
+
 function formatSignedEval(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -373,12 +387,57 @@ function applyProblemDragCursor(pieceCode) {
   document.body.style.cursor = `url('${cursorUrl}') 22 22, grabbing`;
 }
 
-function buildProblemSolutionText(problem) {
-  const pvLine =
+function setProblemEvalRowHidden(hidden) {
+  el.problemEvalRow.classList.toggle("hidden", hidden);
+}
+
+function setProblemEvalDebugValues(problem) {
+  const prev = formatSignedEval(problem.eval_prev);
+  const post = formatSignedEval(problem.eval_pv_final ?? problem.eval_curr ?? problem.eval_prev);
+  el.problemEvalPrev.textContent = `Eval anterior: ${prev}`;
+  el.problemEvalPost.textContent = `Eval posterior: ${post}`;
+}
+
+function getProblemPvLine(problem) {
+  return (
     (problem.pv_line_san && String(problem.pv_line_san).trim()) ||
     (problem.pv_line_uci && String(problem.pv_line_uci).trim()) ||
     (problem.pv_move_uci && String(problem.pv_move_uci).trim().toLowerCase()) ||
-    "?";
+    "?"
+  );
+}
+
+function showProblemDebugHoldInfo() {
+  if (!problemSession.current || problemSession.debugHoldActive) {
+    return;
+  }
+  problemSession.debugHoldActive = true;
+  problemSession.debugRestore = {
+    text: el.problemFeedback.textContent,
+    className: el.problemFeedback.className,
+  };
+  const pvPreview = truncateWithEllipsis(getProblemPvLine(problemSession.current), 30);
+  setProblemFeedback(`PV: ${pvPreview}`, "debug");
+  setProblemEvalDebugValues(problemSession.current);
+  setProblemEvalRowHidden(false);
+}
+
+function hideProblemDebugHoldInfo() {
+  if (!problemSession.debugHoldActive) {
+    return;
+  }
+  const restore = problemSession.debugRestore;
+  if (restore) {
+    el.problemFeedback.textContent = restore.text;
+    el.problemFeedback.className = restore.className;
+  }
+  problemSession.debugRestore = null;
+  problemSession.debugHoldActive = false;
+  setProblemEvalRowHidden(true);
+}
+
+function buildProblemSolutionText(problem) {
+  const pvLine = getProblemPvLine(problem);
   const finalEval = formatSignedEval(problem.eval_pv_final ?? problem.eval_prev ?? problem.eval_curr);
   return `PV: ${pvLine} | Eval final: ${finalEval}`;
 }
@@ -437,6 +496,7 @@ function showNextProblem() {
   if (problemSession.queuePos >= problemSession.queue.length) {
     buildProblemQueue();
   }
+  hideProblemDebugHoldInfo();
 
   const idx = problemSession.queue[problemSession.queuePos];
   problemSession.queuePos += 1;
@@ -448,6 +508,7 @@ function showNextProblem() {
   setProblemLabels(problemSession.current);
   setProblemFeedback(buildProblemPrompt(problemSession.current), "info");
   setProblemActionButtons({ showNext: false, showRepeat: false, showSolution: false });
+  setProblemEvalRowHidden(true);
   startProblemTimer();
 }
 
@@ -455,11 +516,13 @@ function repeatCurrentProblem() {
   if (!problemSession.current) {
     return;
   }
+  hideProblemDebugHoldInfo();
   problemSession.locked = false;
   prepareProblemBoard(problemSession.current);
   ensureProblemBoardVisible();
   setProblemFeedback(buildProblemPrompt(problemSession.current), "info");
   setProblemActionButtons({ showNext: false, showRepeat: false, showSolution: false });
+  setProblemEvalRowHidden(true);
   startProblemTimer();
 }
 
@@ -469,6 +532,7 @@ function openProblemModal() {
 }
 
 function closeProblemModal() {
+  hideProblemDebugHoldInfo();
   stopProblemTimer();
   resetProblemCursor();
   problemDragPieceCode = null;
@@ -477,6 +541,7 @@ function closeProblemModal() {
   el.problemModalOverlay.classList.add("hidden");
   setProblemFeedback("Faça o melhor lance da posição.", "info");
   setProblemActionButtons({ showNext: false, showRepeat: false, showSolution: false });
+  setProblemEvalRowHidden(true);
 }
 
 async function openProblemsSession() {
@@ -498,6 +563,7 @@ async function openProblemsSession() {
 }
 
 function onProblemDrop(source, target) {
+  hideProblemDebugHoldInfo();
   resetProblemCursor();
   problemDragPieceCode = null;
   if (!problemSession.current || problemSession.locked) {
@@ -751,9 +817,22 @@ function wireEvents() {
     if (!problemSession.current) {
       return;
     }
+    hideProblemDebugHoldInfo();
     setProblemFeedback(buildProblemSolutionText(problemSession.current), "info");
     setProblemActionButtons({ showNext: true, showRepeat: false, showSolution: false });
   });
+  const startDebugHold = (event) => {
+    event.preventDefault();
+    showProblemDebugHoldInfo();
+  };
+  const stopDebugHold = () => {
+    hideProblemDebugHoldInfo();
+  };
+  el.problemDebugHoldBtn.addEventListener("pointerdown", startDebugHold);
+  el.problemDebugHoldBtn.addEventListener("pointerup", stopDebugHold);
+  el.problemDebugHoldBtn.addEventListener("pointerleave", stopDebugHold);
+  el.problemDebugHoldBtn.addEventListener("pointercancel", stopDebugHold);
+  document.addEventListener("pointerup", stopDebugHold);
   el.problemSkipBtn.addEventListener("click", showNextProblem);
 
   el.syncBtn.addEventListener("click", doSync);

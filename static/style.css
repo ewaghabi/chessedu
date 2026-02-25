@@ -466,6 +466,24 @@ button:active {
   width: 100%;
 }
 
+.problem-eval-row {
+  width: min(380px, 92%);
+  margin: 6px auto 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.problem-eval-row.hidden {
+  display: none;
+}
+
+.problem-eval-item {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #334155;
+}
+
 .problem-timer-wrap {
   margin-top: 10px;
   display: flex;
@@ -506,6 +524,12 @@ button:active {
   color: #1d4ed8;
 }
 
+.problem-feedback.debug {
+  color: #0f172a;
+  font-size: calc(1rem - 2px);
+  font-weight: 700;
+}
+
 .problem-actions {
   margin-top: 10px;
   display: flex;
@@ -528,6 +552,23 @@ button:active {
 
 .problem-btn-neutral {
   background: #6b7280;
+}
+
+.problem-debug-row {
+  margin-top: 6px;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.problem-debug-btn {
+  min-width: 36px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid #cbd5e1;
+  background: #e2e8f0;
+  color: #0f172a;
+  font-size: 0.9rem;
+  line-height: 1;
 }
 
 @media (max-width: 900px) {

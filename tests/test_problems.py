@@ -28,9 +28,10 @@ class SequenceEngine:
         self.infos = infos[:]
         self.calls = 0
 
-    def analyse(self, board: chess.Board, limit: chess.engine.Limit) -> dict:
+    def analyse(self, board: chess.Board, limit: chess.engine.Limit, **kwargs) -> dict:
         del board
         del limit
+        del kwargs
         self.calls += 1
         if not self.infos:
             raise RuntimeError("sem infos suficientes")
@@ -42,9 +43,10 @@ class InterruptEngine:
         self.calls = 0
         self.interrupt_on_call = interrupt_on_call
 
-    def analyse(self, board: chess.Board, limit: chess.engine.Limit) -> dict:
+    def analyse(self, board: chess.Board, limit: chess.engine.Limit, **kwargs) -> dict:
         del board
         del limit
+        del kwargs
         self.calls += 1
         if self.calls >= self.interrupt_on_call:
             raise KeyboardInterrupt()
@@ -157,7 +159,7 @@ class ProblemsTests(unittest.TestCase):
         self.assertEqual(first["games_processed"], 1)
         self.assertEqual(second["games_selected"], 0)
         self.assertEqual(second["games_processed"], 0)
-        self.assertEqual(positions_count, 1)
+        self.assertEqual(positions_count, 0)
 
     def test_incremental_reprocesses_when_parameter_pair_changes(self):
         self._seed_game("g1", "1. e4 e5 2. Nf3 Nc6 1-0")
@@ -173,9 +175,55 @@ class ProblemsTests(unittest.TestCase):
         self.assertEqual(second["games_processed"], 1)
         self.assertEqual(run_count, 2)
 
-    def test_process_game_inserts_problem_with_side_to_move_and_pv(self):
+    def test_table_with_game_id_filter_reprocesses_target_game(self):
         self._seed_game("g1", "1. e4 e5 2. Nf3 Nc6 1-0")
-        engine = SequenceEngine([cp_info(0), cp_info(20), cp_info(450), cp_info(460), cp_info(470)])
+        engine_first = SequenceEngine([cp_info(0), cp_info(20), cp_info(450), cp_info(460), cp_info(470)])
+        engine_second = SequenceEngine([cp_info(0), cp_info(20), cp_info(450), cp_info(460), cp_info(470)])
+
+        with app_module.db_conn() as conn:
+            problems.ensure_schema(conn)
+            first = problems.table(
+                conn=conn,
+                engine=engine_first,
+                max_games=10,
+                eval_time_tenths=10,
+                eval_delta_tenths=30,
+                only_pending=True,
+                print_table_output=False,
+            )
+            second = problems.table(
+                conn=conn,
+                engine=engine_second,
+                max_games=1,
+                eval_time_tenths=10,
+                eval_delta_tenths=30,
+                only_pending=False,
+                print_table_output=False,
+                game_id_filter="g1",
+                force_reprocess_single=True,
+            )
+            run_count = conn.execute("SELECT COUNT(*) AS n FROM problem_scan_runs WHERE game_id = 'g1'").fetchone()["n"]
+
+        self.assertEqual(first["games_processed"], 1)
+        self.assertEqual(second["games_selected"], 1)
+        self.assertEqual(second["games_processed"], 1)
+        self.assertEqual(run_count, 1)
+
+    def test_process_game_inserts_problem_with_table_rules(self):
+        self._seed_game(
+            "g1",
+            "1. e4 {[%clk 0:02:59.9]} 1... e5 {[%clk 0:02:58.0]} 2. Nf3 {[%clk 0:02:57.0]} 2... Nc6 {[%clk 0:02:56.0]} 1-0",
+        )
+        engine = SequenceEngine(
+            [
+                [cp_info(0, "e2e4"), cp_info(-20, "d2d4")],
+                [cp_info(-350, "e7e5"), cp_info(0, "c7c5")],
+                [cp_info(0, "g1f3"), cp_info(-50, "f1c4")],
+                [cp_info(-10, "b8c6"), cp_info(-30, "g8f6")],
+                [cp_info(0, "d2d4"), cp_info(-20, "c2c4")],
+                cp_info(-200, "g1f3"),
+            ]
+        )
 
         with app_module.db_conn() as conn:
             problems.ensure_schema(conn)
@@ -199,19 +247,19 @@ class ProblemsTests(unittest.TestCase):
                 """
             ).fetchall()
 
-        board_after_e4 = chess.Board()
-        board_after_e4.push_uci("e2e4")
+        board_before_black_move = chess.Board()
+        board_before_black_move.push_uci("e2e4")
 
         self.assertEqual(scanned, 4)
         self.assertEqual(found, 1)
         self.assertEqual(len(inserted), 1)
         self.assertEqual(inserted[0]["ply"], 2)
-        self.assertEqual(inserted[0]["fen"], board_after_e4.fen())
+        self.assertEqual(inserted[0]["fen"], board_before_black_move.fen())
         self.assertEqual(inserted[0]["side_to_move"], "b")
-        self.assertEqual(inserted[0]["pv_move_uci"], "e2e4")
-        self.assertEqual(inserted[0]["pv_line_uci"], "e2e4")
-        self.assertIsNone(inserted[0]["pv_line_san"])
-        self.assertIsNone(inserted[0]["eval_pv_final"])
+        self.assertEqual(inserted[0]["pv_move_uci"], "e7e5")
+        self.assertEqual(inserted[0]["pv_line_uci"], "e7e5")
+        self.assertEqual(inserted[0]["pv_line_san"], "1...e5")
+        self.assertIsNotNone(inserted[0]["eval_pv_final"])
         self.assertEqual(inserted[0]["presented_count"], 0)
         self.assertEqual(inserted[0]["correct_count"], 0)
         self.assertEqual(inserted[0]["avg_correct_time_ms"], 0.0)
@@ -263,6 +311,180 @@ class ProblemsTests(unittest.TestCase):
         result = problems.eval_after_pv_line(engine, chess.Board().fen(), "e2e4", limit_seconds=0.1)
         self.assertEqual(result, 1.23)
 
+    def test_analyze_board_multipv_returns_two_lines(self):
+        board = chess.Board()
+        engine = SequenceEngine(
+            [
+                [
+                    {
+                        "score": chess.engine.PovScore(chess.engine.Cp(120), chess.WHITE),
+                        "pv": [chess.Move.from_uci("e2e4"), chess.Move.from_uci("e7e5")],
+                    },
+                    {
+                        "score": chess.engine.PovScore(chess.engine.Cp(30), chess.WHITE),
+                        "pv": [chess.Move.from_uci("d2d4")],
+                    },
+                ]
+            ]
+        )
+
+        info = problems.analyze_board_multipv(engine, board, limit_seconds=0.1, multipv=2)
+        self.assertEqual(info["eval_pv1"], 1.2)
+        self.assertEqual(info["eval_pv2"], 0.3)
+        self.assertEqual(info["pv1_line_uci"], "e2e4 e7e5")
+
+    def test_build_table_rows_backfills_played_eval_from_next_position(self):
+        pgn = "1. e4 {[%clk 0:02:59.9]} 1... e5 {[%clk 0:02:59.1]} 1-0"
+        engine = SequenceEngine(
+            [
+                [cp_info(0, "e2e4"), cp_info(-20, "d2d4")],
+                [cp_info(150, "e7e5"), cp_info(80, "c7c5")],
+                [cp_info(10, "g1f3"), cp_info(-10, "f1c4")],
+            ]
+        )
+
+        rows = problems.build_table_rows(engine, pgn, eval_time_tenths=10)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["played_san"], "1.e4")
+        self.assertEqual(rows[1]["played_san"], "1...e5")
+        self.assertEqual(rows[0]["pv1_line_san"], "1. e4")
+        self.assertEqual(rows[1]["pv1_line_san"], "1...e5")
+        self.assertEqual(rows[0]["eval_pv1"], 0.0)
+        self.assertEqual(rows[0]["eval_pv2"], -0.2)
+        self.assertIsNone(rows[0]["eval_anterior"])
+        self.assertEqual(rows[0]["eval_played"], 1.5)
+        self.assertEqual(rows[0]["clock_seconds"], 179.9)
+        self.assertEqual(rows[1]["eval_pv1"], -1.5)
+        self.assertEqual(rows[1]["eval_pv2"], -0.8)
+        self.assertEqual(rows[1]["eval_anterior"], -0.0)
+        self.assertEqual(rows[1]["eval_played"], -0.1)
+        self.assertEqual(rows[1]["clock_seconds"], 179.1)
+        self.assertEqual(rows[0]["problem"], False)
+        self.assertEqual(rows[1]["problem"], False)
+        self.assertEqual(rows[0]["c1"], False)
+        self.assertEqual(rows[0]["c2"], True)
+        self.assertEqual(rows[0]["c3"], False)
+        self.assertEqual(rows[0]["c4"], False)
+        self.assertEqual(rows[0]["c5"], True)
+
+    def test_build_table_rows_inverts_eval_anterior_from_previous_row(self):
+        pgn = "1. e4 1... e5 1-0"
+        engine = SequenceEngine(
+            [
+                [cp_info(80, "e2e4"), cp_info(20, "d2d4")],
+                [cp_info(200, "e7e5"), cp_info(100, "c7c5")],
+                [cp_info(120, "g1f3"), cp_info(60, "f1c4")],
+            ]
+        )
+
+        rows = problems.build_table_rows(engine, pgn, eval_time_tenths=10)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["eval_pv1"], 0.8)
+        self.assertEqual(rows[1]["eval_anterior"], -0.8)
+
+    def test_is_problem_candidate_reuses_current_rules(self):
+        self.assertTrue(
+            problems.is_problem_candidate(
+                eval_prev=0.1,
+                eval_curr=3.5,
+                delta_limit=3.0,
+                played_uci="d2d4",
+                best_uci="e2e4",
+            )
+        )
+        self.assertFalse(
+            problems.is_problem_candidate(
+                eval_prev=4.5,
+                eval_curr=8.0,
+                delta_limit=3.0,
+                played_uci="d2d4",
+                best_uci="e2e4",
+            )
+        )
+        self.assertFalse(
+            problems.is_problem_candidate(
+                eval_prev=0.0,
+                eval_curr=4.0,
+                delta_limit=3.0,
+                played_uci="e2e4",
+                best_uci="e2e4",
+            )
+        )
+
+    def test_is_table_problem_candidate_rules(self):
+        self.assertEqual(
+            problems.evaluate_table_problem_criteria(
+                eval_anterior=0.0,
+                eval_pv1=3.2,
+                eval_pv2=0.4,
+                eval_jogado=0.1,
+                tempo_restante_s=45.0,
+                eval_delta=3.0,
+            ),
+            {"c1": True, "c2": True, "c3": True, "c4": True, "c5": True, "problem": True},
+        )
+        self.assertEqual(
+            problems.evaluate_table_problem_criteria(
+                eval_anterior=0.5,
+                eval_pv1=2.0,
+                eval_pv2=0.2,
+                eval_jogado=0.1,
+                tempo_restante_s=45.0,
+                eval_delta=3.0,
+            ),
+            {"c1": False, "c2": True, "c3": False, "c4": False, "c5": True, "problem": False},
+        )
+        self.assertTrue(
+            problems.is_table_problem_candidate(
+                eval_anterior=0.0,
+                eval_pv1=3.2,
+                eval_pv2=0.4,
+                eval_jogado=0.1,
+                tempo_restante_s=45.0,
+                eval_delta=3.0,
+            )
+        )
+        self.assertFalse(
+            problems.is_table_problem_candidate(
+                eval_anterior=0.5,
+                eval_pv1=2.0,
+                eval_pv2=0.2,
+                eval_jogado=0.1,
+                tempo_restante_s=45.0,
+                eval_delta=3.0,
+            )
+        )
+        self.assertFalse(
+            problems.is_table_problem_candidate(
+                eval_anterior=0.0,
+                eval_pv1=5.5,
+                eval_pv2=1.0,
+                eval_jogado=0.2,
+                tempo_restante_s=45.0,
+                eval_delta=3.0,
+            )
+        )
+        self.assertFalse(
+            problems.is_table_problem_candidate(
+                eval_anterior=0.0,
+                eval_pv1=3.0,
+                eval_pv2=1.0,
+                eval_jogado=2.7,
+                tempo_restante_s=45.0,
+                eval_delta=3.0,
+            )
+        )
+        self.assertFalse(
+            problems.is_table_problem_candidate(
+                eval_anterior=0.0,
+                eval_pv1=3.2,
+                eval_pv2=0.4,
+                eval_jogado=0.1,
+                tempo_restante_s=18.0,
+                eval_delta=3.0,
+            )
+        )
+
     def test_is_relevant_problem_swing_filters_irrelevant_large_same_side_advantage(self):
         self.assertTrue(problems.is_relevant_problem_swing(0.1, 3.5))
         self.assertFalse(problems.is_relevant_problem_swing(4.5, 8.0))
@@ -283,7 +505,8 @@ class ProblemsTests(unittest.TestCase):
         printed = out.getvalue()
         self.assertIn("\r[1/1]", printed)
         self.assertIn("[1/1]", printed)
-        self.assertIn("problemas=1", printed)
+        self.assertIn("Analisando 1.e4", printed)
+        self.assertIn("problemas=0", printed)
         self.assertIn("concluido", printed)
 
     def test_run_batch_handles_keyboard_interrupt_without_traceback(self):

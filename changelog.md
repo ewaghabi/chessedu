@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.0
+- Pipeline de geração de problemas unificado para usar os mesmos critérios da análise em tabela (`c1..c5`) como regra oficial de seleção.
+- Novo modo de debug direcionado por jogo: adicionado parâmetro `--game-id` no `problems.py` para processar somente uma partida específica.
+- Reprocessamento forçado por jogo/parâmetros ao usar `--game-id`, limpando apenas os registros correspondentes em `problem_positions` e `problem_scan_runs`.
+- Saída da tabela aprimorada para auditoria:
+  - nova coluna `jogado` com SAN numerado (`1.e4`, `1...Nc6`);
+  - coluna `pv1` convertida para SAN numerado (em vez de UCI), mantendo truncamento para leitura.
+- Fluxo de progresso mantido por lance (`Analisando ...`) e consolidado com linha final de conclusão por jogo.
+- Cobertura de testes ampliada para o novo filtro por `game_id`, reprocessamento forçado e novas colunas SAN da tabela.
+
 ## 0.8.0
 - Gerador de problemas refinado para focar apenas em chances desperdiçadas: além do filtro de swing e relevância competitiva, posições em que o lance jogado coincide com a PV principal são descartadas.
 - Persistência de PV ampliada: problemas agora armazenam linha completa em UCI (`pv_line_uci`) e SAN (`pv_line_san`), mantendo `pv_move_uci` para compatibilidade.
