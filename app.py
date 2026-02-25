@@ -72,6 +72,14 @@ def db_conn() -> sqlite3.Connection:
     return conn
 
 
+def table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ? LIMIT 1",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
 def init_db() -> None:
     with closing(db_conn()) as conn:
         conn.executescript(CREATE_TABLES_SQL)
@@ -255,6 +263,17 @@ def infer_username_from_games(conn: sqlite3.Connection) -> str | None:
         """
     ).fetchone()
     return row["username"] if row else None
+
+
+def parse_elo_header(value: str | None) -> int | None:
+    if value is None:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    if not raw.isdigit():
+        return None
+    return int(raw)
 
 
 def fen_from_move_list(moves_uci: list[str]) -> str:
@@ -618,9 +637,7 @@ def api_count():
 
     with closing(db_conn()) as conn:
         count = conn.execute(query, params).fetchone()["n"]
-        has_problem_positions = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='problem_positions' LIMIT 1"
-        ).fetchone()
+        has_problem_positions = table_exists(conn, "problem_positions")
         problems_count = 0
         if has_problem_positions:
             problems_query = f"""
@@ -633,6 +650,76 @@ def api_count():
             problems_count = conn.execute(problems_query, params).fetchone()["n"]
 
     return jsonify({"username": username, "count": count, "problems_count": problems_count})
+
+
+@app.get("/api/problems")
+def api_problems():
+    username = request.args.get("username", "").strip().lower()
+    color = request.args.get("color", "any")
+    time_classes = request.args.get("time_classes")
+    ignore_timeout_losses = request.args.get("ignore_timeout_losses", "0")
+
+    if not username:
+        return jsonify({"error": "Parâmetro obrigatório: username."}), 400
+    try:
+        color_filter = validate_color_filter(color)
+        selected_time_classes = parse_time_classes(time_classes)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    filters_sql, filter_params = build_game_filters_sql(
+        username=username,
+        color_filter=color_filter,
+        time_classes=selected_time_classes,
+        ignore_timeout_losses=parse_bool_flag(ignore_timeout_losses),
+    )
+    params = [username, username]
+    params.extend(filter_params)
+
+    with closing(db_conn()) as conn:
+        if not table_exists(conn, "problem_positions"):
+            return jsonify({"username": username, "total": 0, "problems": []})
+
+        query = f"""
+                SELECT
+                    pp.id AS problem_id,
+                    pp.game_id,
+                    pp.fen,
+                    pp.side_to_move,
+                    pp.pv_move_uci,
+                    g.white,
+                    g.black,
+                    g.end_time,
+                    g.time_class,
+                    g.pgn
+                FROM problem_positions pp
+                JOIN games g ON g.id = pp.game_id
+                WHERE (g.white = ? OR g.black = ?)
+                  {filters_sql}
+                ORDER BY g.end_time DESC, pp.id DESC
+                """
+        rows = conn.execute(query, params).fetchall()
+
+    problems: list[dict[str, Any]] = []
+    for row in rows:
+        headers = pgn_headers(row["pgn"] or "")
+        problems.append(
+            {
+                "problem_id": row["problem_id"],
+                "game_id": row["game_id"],
+                "fen": row["fen"],
+                "side_to_move": row["side_to_move"],
+                "pv_move_uci": row["pv_move_uci"],
+                "white": row["white"],
+                "black": row["black"],
+                "white_rating": parse_elo_header(headers.get("WhiteElo")),
+                "black_rating": parse_elo_header(headers.get("BlackElo")),
+                "end_time": row["end_time"],
+                "time_class": row["time_class"],
+            }
+        )
+
+    return jsonify({"username": username, "total": len(problems), "problems": problems})
 
 
 @app.get("/api/game/<game_id>")

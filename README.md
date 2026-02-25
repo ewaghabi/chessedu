@@ -1,22 +1,56 @@
-# Chess.com Opening Explorer (Local)
+# ChessEdu (Local)
 
-Visualizador local para estudar suas aberturas com base nas suas partidas do Chess.com.
+Aplicativo local para estudar suas partidas do Chess.com com foco em abertura, padrões recorrentes e treino de tática a partir dos seus próprios erros.
 
-Versão atual: `0.2.0` (ver `changelog.md`).
+## Principais funcionalidades
 
-## O que faz
+- Sincronização incremental de partidas via API pública do Chess.com.
+- Armazenamento local em SQLite (`games.db`) e indexação de posições por lance.
+- Exploração de posição atual com:
+  - próximos lances mais jogados;
+  - taxa de vitória por lance (do ponto de vista do usuário);
+  - lista de partidas que passaram pela posição.
+- Filtros avançados por:
+  - cor jogada (`any`, `white`, `black`);
+  - ritmos (`blitz`, `rapid`, `bullet`, `outros`);
+  - opção de ignorar derrotas por tempo.
+- Contadores no painel de filtros:
+  - `Partidas` (com filtros aplicados);
+  - `Problemas` (quantidade de problemas táticos disponíveis para os mesmos filtros).
 
-- Sincroniza partidas diretamente da API pública do Chess.com.
-- Salva em SQLite (`games.db`) local.
-- Atualização incremental por arquivo mensal (archives).
-- Indexa posições e próximos lances para consulta rápida.
-- Mostra, para a posição atual:
-  - próximos lances jogados,
-  - quantidade de partidas,
-  - taxa de vitória (%), do seu ponto de vista.
-- Lista as partidas que passaram pela posição e permite carregar uma partida no tabuleiro.
+## Treino de problemas (novo)
 
-## Rodar
+- Botão **GO!** ao lado de `Problemas` abre um modal de treino.
+- Cada problema é uma posição extraída previamente pelo batch com Stockfish.
+- Fluxo do modal:
+  - sorteio aleatório sem repetição até consumir a lista filtrada;
+  - tabuleiro orientado para o lado a jogar;
+  - exibição de jogadores e ELO;
+  - cronômetro por problema;
+  - validação imediata do lance com feedback visual;
+  - ações: **Próximo problema**, **Repetir**, **Pular problema**.
+- UX de movimento refinada:
+  - arrastar/soltar com melhor sincronização visual;
+  - cursor com a imagem da peça durante o drag (com fallback).
+
+## Batch de geração de problemas
+
+O projeto inclui um processo dedicado (`problems.py`) para identificar posições-problema a partir das partidas já sincronizadas.
+
+Exemplo:
+
+```bash
+.venv/bin/python problems.py --max-games 100 --eval-time 1.0 --eval-delta 3.0
+```
+
+Esse processo:
+
+- analisa partidas com Stockfish;
+- detecta swings de avaliação acima do limiar;
+- popula a tabela `problem_positions`;
+- suporta execução incremental por combinação de parâmetros.
+
+## Como rodar
 
 ```bash
 cd /Users/eduardowaghabi/chessedu
@@ -26,7 +60,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Abra [http://127.0.0.1:5000](http://127.0.0.1:5000).
+Acesse [http://127.0.0.1:5000](http://127.0.0.1:5000).
 
 ## Testes
 
@@ -34,15 +68,14 @@ Abra [http://127.0.0.1:5000](http://127.0.0.1:5000).
 python -m unittest discover -s tests -v
 ```
 
-## Fluxo de uso
+## Fluxo recomendado
 
-1. Informe seu username do Chess.com.
-2. Clique em **Atualizar banco (incremental)**.
-3. Explore os lances sugeridos clicando em **Entrar**.
-4. Em qualquer posição, clique em **Ver partidas desta posição** para abrir a lista.
-5. Clique em **Carregar** numa partida para ver o jogo no tabuleiro.
+1. Sincronize partidas com **Atualizar banco (incremental)**.
+2. Navegue no tabuleiro principal para estudar lances e resultados.
+3. Gere/atualize problemas com `problems.py` quando quiser ampliar o banco tático.
+4. Use o botão **GO!** para treinar os problemas no modal.
 
 ## Observações
 
-- A sincronização incremental considera novos arquivos mensais ainda não sincronizados.
-- Se o Chess.com alterar partidas em um mês já sincronizado, clique em "reset" do banco (não implementado ainda) ou remova `games.db` para forçar carga completa.
+- O histórico detalhado de mudanças está em `changelog.md`.
+- Nesta etapa, o treino no modal ainda não persiste métricas de acerto/tempo no banco; isso pode ser habilitado em uma evolução futura.

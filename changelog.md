@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0
+- Novo modo de treino de problemas com botão `GO!` no painel de filtros e modal dedicado para resolução tática.
+- Novo endpoint `GET /api/problems` com suporte aos mesmos filtros do app (`color`, `time_classes`, `ignore_timeout_losses`) e retorno de posição, lance esperado (PV), metadados da partida e ELO dos jogadores.
+- Fluxo de treino implementado no frontend com:
+  - sorteio aleatório sem repetição até consumir a lista filtrada;
+  - tabuleiro orientado pelo lado a jogar;
+  - cronômetro por problema;
+  - validação imediata de lance (UCI exata), com ações `Próximo problema`, `Repetir` e `Pular problema`.
+- Melhorias de UX no tabuleiro do modal:
+  - renderização robusta ao abrir/redimensionar modal;
+  - interação de arrastar/soltar refinada;
+  - cursor com imagem da peça durante o movimento (fallback para `grabbing`).
+- Cobertura de testes ampliada para contrato do endpoint `/api/problems`, filtros de problemas, artefatos do modal e regressões da lógica de treino no frontend.
+
 ## 0.6.0
 - Novo batch dedicado em `problems.py` para extração incremental de posições-problema com Stockfish, com parâmetros de tempo por lance e delta mínimo de avaliação.
 - Persistência de problemas em novas estruturas SQLite (`problem_positions` e `problem_scan_runs`) e marcação de processamento em `games.tactics_last_processed_at`, com migração aditiva preservando dados existentes.

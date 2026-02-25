@@ -70,7 +70,13 @@
             </label>
           </div>
 
-          <div id="filtered-count" class="filter-count">Partidas: 0<br />Problemas: 0</div>
+          <div id="filtered-count" class="filter-count">
+            <div id="filtered-games-count">Partidas: 0</div>
+            <div class="problems-row">
+              <span id="filtered-problems-count">Problemas: 0</span>
+              <button id="go-problems-btn" type="button" disabled>GO!</button>
+            </div>
+          </div>
         </aside>
 
         <div class="panel board-panel">
@@ -100,6 +106,31 @@
         </div>
       </section>
     </main>
+
+    <div id="problem-modal-overlay" class="problem-modal-overlay hidden">
+      <div class="problem-modal" role="dialog" aria-modal="true" aria-labelledby="problem-modal-title">
+        <div class="problem-modal-header">
+          <h2 id="problem-modal-title">Teste de Problemas</h2>
+          <button id="problem-modal-close" class="problem-close-btn" type="button" aria-label="Fechar">X</button>
+        </div>
+        <div id="problem-modal-meta" class="problem-modal-meta">-</div>
+        <div id="problem-player-top" class="player-tag">-</div>
+        <div class="problem-board-wrap">
+          <div id="problem-board"></div>
+        </div>
+        <div id="problem-player-bottom" class="player-tag">-</div>
+        <div class="problem-timer-wrap">
+          <span class="problem-timer-label">Tempo:</span>
+          <span id="problem-timer" class="problem-timer">00:00.0</span>
+        </div>
+        <div id="problem-feedback" class="problem-feedback">Faça o melhor lance da posição.</div>
+        <div class="problem-actions">
+          <button id="problem-next-btn" class="problem-btn-success hidden" type="button">Próximo problema</button>
+          <button id="problem-repeat-btn" class="problem-btn-danger hidden" type="button">Repetir</button>
+          <button id="problem-skip-btn" class="problem-btn-neutral" type="button">Pular problema</button>
+        </div>
+      </div>
+    </div>
 
     <script src="{{ url_for('static', filename='vendor/jquery/jquery-3.7.1.min.js') }}"></script>
     <script src="{{ url_for('static', filename='vendor/chessjs/chess.min.js') }}"></script>

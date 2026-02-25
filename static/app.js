@@ -11,6 +11,18 @@ let selectedTimeClasses = new Set(["blitz", "rapid", "bullet", "outros"]);
 let loadedGameMoves = null;
 let replayIndex = 0;
 let loadedGameIsUserBlack = false;
+let problemBoard = null;
+let problemGame = null;
+let problemSession = {
+  problems: [],
+  queue: [],
+  queuePos: 0,
+  current: null,
+  timerId: null,
+  startedAtMs: 0,
+  locked: true,
+};
+let problemDragPieceCode = null;
 
 const el = {
   username: document.getElementById("username"),
@@ -30,6 +42,9 @@ const el = {
   timeOutros: document.getElementById("time-outros"),
   ignoreTimeoutLosses: document.getElementById("ignore-timeout-losses"),
   filteredCount: document.getElementById("filtered-count"),
+  filteredGamesCount: document.getElementById("filtered-games-count"),
+  filteredProblemsCount: document.getElementById("filtered-problems-count"),
+  goProblemsBtn: document.getElementById("go-problems-btn"),
   dbCount: document.getElementById("db-count"),
   appVersion: document.getElementById("app-version"),
   status: document.getElementById("status"),
@@ -38,6 +53,16 @@ const el = {
   gameMeta: document.getElementById("game-meta"),
   playerTop: document.getElementById("player-top"),
   playerBottom: document.getElementById("player-bottom"),
+  problemModalOverlay: document.getElementById("problem-modal-overlay"),
+  problemModalClose: document.getElementById("problem-modal-close"),
+  problemModalMeta: document.getElementById("problem-modal-meta"),
+  problemPlayerTop: document.getElementById("problem-player-top"),
+  problemPlayerBottom: document.getElementById("problem-player-bottom"),
+  problemTimer: document.getElementById("problem-timer"),
+  problemFeedback: document.getElementById("problem-feedback"),
+  problemNextBtn: document.getElementById("problem-next-btn"),
+  problemRepeatBtn: document.getElementById("problem-repeat-btn"),
+  problemSkipBtn: document.getElementById("problem-skip-btn"),
 };
 
 function setStatus(text, mode = "info") {
@@ -64,7 +89,9 @@ function updateColorFilterLabel() {
 }
 
 function updateFilteredCount(count, problemsCount = 0) {
-  el.filteredCount.innerHTML = `Partidas: ${count}<br />Problemas: ${problemsCount}`;
+  el.filteredGamesCount.textContent = `Partidas: ${count}`;
+  el.filteredProblemsCount.textContent = `Problemas: ${problemsCount}`;
+  el.goProblemsBtn.disabled = !username || problemsCount <= 0;
 }
 
 function buildFilterQuery() {
@@ -244,6 +271,240 @@ function buildPlayerLabel(name, rating) {
   return rating ? `${name} (${rating})` : name;
 }
 
+function shuffleArray(items) {
+  const copy = items.slice();
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = copy[i];
+    copy[i] = copy[j];
+    copy[j] = tmp;
+  }
+  return copy;
+}
+
+function formatTimerElapsed(ms) {
+  const safe = Math.max(0, ms || 0);
+  const tenths = Math.floor((safe % 1000) / 100);
+  const totalSeconds = Math.floor(safe / 1000);
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60);
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${tenths}`;
+}
+
+function stopProblemTimer() {
+  if (problemSession.timerId) {
+    clearInterval(problemSession.timerId);
+    problemSession.timerId = null;
+  }
+}
+
+function startProblemTimer() {
+  stopProblemTimer();
+  problemSession.startedAtMs = Date.now();
+  el.problemTimer.textContent = "00:00.0";
+  problemSession.timerId = setInterval(() => {
+    const elapsed = Date.now() - problemSession.startedAtMs;
+    el.problemTimer.textContent = formatTimerElapsed(elapsed);
+  }, 100);
+}
+
+function setProblemFeedback(text, mode = "") {
+  el.problemFeedback.textContent = text;
+  el.problemFeedback.className = `problem-feedback ${mode}`.trim();
+}
+
+function resetProblemCursor() {
+  document.body.style.cursor = "";
+}
+
+function applyProblemDragCursor(pieceCode) {
+  const safeCode = (pieceCode || "").trim();
+  if (!safeCode) {
+    document.body.style.cursor = "grabbing";
+    return;
+  }
+  const cursorUrl = `/static/vendor/chessboardjs/img/chesspieces/wikipedia/${safeCode}.png`;
+  document.body.style.cursor = `url('${cursorUrl}') 22 22, grabbing`;
+}
+
+function setProblemActionButtons({ showNext = false, showRepeat = false } = {}) {
+  el.problemNextBtn.classList.toggle("hidden", !showNext);
+  el.problemRepeatBtn.classList.toggle("hidden", !showRepeat);
+}
+
+function buildProblemQueue() {
+  const indexes = problemSession.problems.map((_, idx) => idx);
+  problemSession.queue = shuffleArray(indexes);
+  problemSession.queuePos = 0;
+}
+
+function setProblemLabels(problem) {
+  const whiteLabel = buildPlayerLabel(problem.white, problem.white_rating);
+  const blackLabel = buildPlayerLabel(problem.black, problem.black_rating);
+  const orientation = problem.side_to_move === "b" ? "black" : "white";
+
+  if (orientation === "black") {
+    el.problemPlayerTop.textContent = whiteLabel;
+    el.problemPlayerBottom.textContent = blackLabel;
+  } else {
+    el.problemPlayerTop.textContent = blackLabel;
+    el.problemPlayerBottom.textContent = whiteLabel;
+  }
+
+  const dateText = formatDateFromUnix(problem.end_time);
+  const timeClass = problem.time_class || "?";
+  el.problemModalMeta.textContent = `${problem.white} vs ${problem.black} | ${dateText} | ${timeClass}`;
+}
+
+function prepareProblemBoard(problem) {
+  problemGame.load(problem.fen);
+  problemBoard.orientation(problem.side_to_move === "b" ? "black" : "white");
+  problemBoard.position(problem.fen);
+}
+
+function ensureProblemBoardVisible() {
+  if (!problemBoard) return;
+  requestAnimationFrame(() => {
+    problemBoard.resize();
+    if (problemGame) {
+      problemBoard.position(problemGame.fen());
+    }
+  });
+}
+
+function showNextProblem() {
+  if (!problemSession.problems.length) {
+    return;
+  }
+
+  if (problemSession.queuePos >= problemSession.queue.length) {
+    buildProblemQueue();
+  }
+
+  const idx = problemSession.queue[problemSession.queuePos];
+  problemSession.queuePos += 1;
+  problemSession.current = problemSession.problems[idx];
+  problemSession.locked = false;
+
+  prepareProblemBoard(problemSession.current);
+  ensureProblemBoardVisible();
+  setProblemLabels(problemSession.current);
+  setProblemFeedback("Faça o melhor lance da posição.", "info");
+  setProblemActionButtons({ showNext: false, showRepeat: false });
+  startProblemTimer();
+}
+
+function repeatCurrentProblem() {
+  if (!problemSession.current) {
+    return;
+  }
+  problemSession.locked = false;
+  prepareProblemBoard(problemSession.current);
+  ensureProblemBoardVisible();
+  setProblemFeedback("Tente novamente.", "info");
+  setProblemActionButtons({ showNext: false, showRepeat: false });
+  startProblemTimer();
+}
+
+function openProblemModal() {
+  el.problemModalOverlay.classList.remove("hidden");
+  ensureProblemBoardVisible();
+}
+
+function closeProblemModal() {
+  stopProblemTimer();
+  resetProblemCursor();
+  problemDragPieceCode = null;
+  problemSession.current = null;
+  problemSession.locked = true;
+  el.problemModalOverlay.classList.add("hidden");
+  setProblemFeedback("Faça o melhor lance da posição.", "");
+  setProblemActionButtons({ showNext: false, showRepeat: false });
+}
+
+async function openProblemsSession() {
+  if (!username) {
+    setStatus("Informe o usuário e sincronize ao menos uma vez.", "error");
+    return;
+  }
+
+  const data = await apiJson(`/api/problems?username=${encodeURIComponent(username)}&${buildFilterQuery()}`);
+  if (!data.total || !Array.isArray(data.problems) || !data.problems.length) {
+    setStatus("Nenhum problema disponível com os filtros atuais.", "error");
+    return;
+  }
+
+  problemSession.problems = data.problems;
+  buildProblemQueue();
+  openProblemModal();
+  showNextProblem();
+}
+
+function onProblemDrop(source, target) {
+  resetProblemCursor();
+  problemDragPieceCode = null;
+  if (!problemSession.current || problemSession.locked) {
+    return "snapback";
+  }
+
+  const attempted = problemGame.move({
+    from: source,
+    to: target,
+    promotion: "q",
+  });
+  if (!attempted) {
+    return "snapback";
+  }
+
+  const attemptedUci = `${attempted.from}${attempted.to}${attempted.promotion || ""}`;
+  const expectedUci = (problemSession.current.pv_move_uci || "").toLowerCase();
+  const isCorrect = attemptedUci.toLowerCase() === expectedUci;
+
+  problemBoard.position(problemGame.fen());
+  stopProblemTimer();
+  problemSession.locked = true;
+
+  if (isCorrect) {
+    setProblemFeedback(`Correto! Lance: ${attemptedUci}`, "success");
+    setProblemActionButtons({ showNext: true, showRepeat: false });
+  } else {
+    setProblemFeedback(`Incorreto. Você jogou ${attemptedUci}.`, "error");
+    setProblemActionButtons({ showNext: false, showRepeat: true });
+  }
+
+  return undefined;
+}
+
+function onProblemDragStart(source, piece) {
+  if (!problemSession.current || problemSession.locked) {
+    return false;
+  }
+
+  const turn = problemGame.turn();
+  const isWhitePiece = piece.startsWith("w");
+  if ((turn === "w" && !isWhitePiece) || (turn === "b" && isWhitePiece)) {
+    return false;
+  }
+
+  // Sanity check to avoid starting a drag from a square that has no legal piece.
+  const squarePiece = problemGame.get(source);
+  if (!squarePiece) {
+    return false;
+  }
+
+  problemDragPieceCode = piece;
+  applyProblemDragCursor(problemDragPieceCode);
+  return true;
+}
+
+function onProblemSnapEnd() {
+  resetProblemCursor();
+  problemDragPieceCode = null;
+  if (problemBoard && problemGame) {
+    problemBoard.position(problemGame.fen());
+  }
+}
+
 function renderGames(games) {
   el.gamesList.innerHTML = "";
   if (!games.length) {
@@ -408,6 +669,29 @@ function wireEvents() {
     await refreshFromPosition(true);
   };
 
+  el.goProblemsBtn.addEventListener("click", async () => {
+    try {
+      await openProblemsSession();
+    } catch (err) {
+      setStatus(err.message, "error");
+    }
+  });
+
+  el.problemModalClose.addEventListener("click", closeProblemModal);
+  el.problemModalOverlay.addEventListener("click", (event) => {
+    if (event.target === el.problemModalOverlay) {
+      closeProblemModal();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !el.problemModalOverlay.classList.contains("hidden")) {
+      closeProblemModal();
+    }
+  });
+  el.problemNextBtn.addEventListener("click", showNextProblem);
+  el.problemRepeatBtn.addEventListener("click", repeatCurrentProblem);
+  el.problemSkipBtn.addEventListener("click", showNextProblem);
+
   el.syncBtn.addEventListener("click", doSync);
   el.resetBtn.addEventListener("click", async () => {
     if (!game || !board) return;
@@ -495,6 +779,11 @@ async function main() {
     const msg = event.reason?.message || String(event.reason || "Erro assíncrono no frontend.");
     setStatus(`Erro no frontend: ${msg}`, "error");
   });
+  window.addEventListener("resize", () => {
+    if (!el.problemModalOverlay.classList.contains("hidden")) {
+      ensureProblemBoardVisible();
+    }
+  });
 
   try {
     if (typeof Chess === "undefined") {
@@ -508,6 +797,15 @@ async function main() {
     board = Chessboard("board", {
       position: "start",
       draggable: false,
+      pieceTheme: "/static/vendor/chessboardjs/img/chesspieces/wikipedia/{piece}.png",
+    });
+    problemGame = new Chess();
+    problemBoard = Chessboard("problem-board", {
+      position: "start",
+      draggable: true,
+      onDragStart: onProblemDragStart,
+      onDrop: onProblemDrop,
+      onSnapEnd: onProblemSnapEnd,
       pieceTheme: "/static/vendor/chessboardjs/img/chesspieces/wikipedia/{piece}.png",
     });
 

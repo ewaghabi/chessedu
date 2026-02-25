@@ -589,6 +589,137 @@ class AppTests(unittest.TestCase):
         self.assertEqual(no_timeout.get_json()["count"], 2)
         self.assertEqual(no_timeout.get_json()["problems_count"], 2)
 
+    def test_api_problems_requires_username(self):
+        response = self.client.get("/api/problems")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("username", response.get_json()["error"])
+
+    def test_api_problems_returns_empty_when_table_is_missing(self):
+        self._seed_games_for_advanced_filters()
+        response = self.client.get("/api/problems?username=me&time_classes=blitz,rapid,bullet,outros")
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["total"], 0)
+        self.assertEqual(payload["problems"], [])
+
+    def test_api_problems_applies_filters_and_returns_expected_fields(self):
+        self._seed_games_for_advanced_filters()
+        pgn_invalid_rating = """[Event "Live Chess"]
+[Site "Chess.com"]
+[Date "2024.01.04"]
+[Round "-"]
+[White "oppx"]
+[Black "me"]
+[WhiteElo "abc"]
+[BlackElo ""]
+[Result "1-0"]
+
+1. d4 d5 1-0
+"""
+        with app_module.db_conn() as conn:
+            app_module.upsert_game(
+                conn,
+                make_game_payload(
+                    "g_timeout_black",
+                    pgn=pgn_invalid_rating,
+                    white="oppx",
+                    black="me",
+                    white_result="win",
+                    black_result="timeout",
+                    end_time=1700000104,
+                    time_class="bullet",
+                ),
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS problem_positions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    game_id TEXT NOT NULL,
+                    ply INTEGER NOT NULL,
+                    fen TEXT NOT NULL,
+                    side_to_move TEXT NOT NULL,
+                    pv_move_uci TEXT NOT NULL,
+                    eval_prev REAL NOT NULL,
+                    eval_curr REAL NOT NULL,
+                    eval_delta REAL NOT NULL,
+                    eval_time_tenths INTEGER NOT NULL,
+                    eval_delta_tenths INTEGER NOT NULL,
+                    presented_count INTEGER NOT NULL DEFAULT 0,
+                    correct_count INTEGER NOT NULL DEFAULT 0,
+                    avg_correct_time_ms REAL NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO problem_positions (
+                    game_id, ply, fen, side_to_move, pv_move_uci,
+                    eval_prev, eval_curr, eval_delta, eval_time_tenths, eval_delta_tenths, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("g_blitz", 1, chess.Board().fen(), "w", "e2e4", 0.0, 3.5, 3.5, 10, 30, 1700000101),
+            )
+            conn.execute(
+                """
+                INSERT INTO problem_positions (
+                    game_id, ply, fen, side_to_move, pv_move_uci,
+                    eval_prev, eval_curr, eval_delta, eval_time_tenths, eval_delta_tenths, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("g_daily", 1, chess.Board().fen(), "b", "d7d5", 0.0, 4.1, 4.1, 10, 30, 1700000103),
+            )
+            conn.execute(
+                """
+                INSERT INTO problem_positions (
+                    game_id, ply, fen, side_to_move, pv_move_uci,
+                    eval_prev, eval_curr, eval_delta, eval_time_tenths, eval_delta_tenths, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("g_timeout_black", 1, chess.Board().fen(), "b", "e7e5", 0.0, 5.0, 5.0, 10, 30, 1700000104),
+            )
+            conn.commit()
+
+        all_problems = self.client.get("/api/problems?username=me&time_classes=blitz,rapid,bullet,outros")
+        self.assertEqual(all_problems.status_code, 200)
+        payload = all_problems.get_json()
+        self.assertEqual(payload["total"], 3)
+        self.assertEqual(len(payload["problems"]), 3)
+        first = payload["problems"][0]
+        self.assertIn("problem_id", first)
+        self.assertIn("game_id", first)
+        self.assertIn("fen", first)
+        self.assertIn("side_to_move", first)
+        self.assertIn("pv_move_uci", first)
+        self.assertIn("white", first)
+        self.assertIn("black", first)
+        self.assertIn("white_rating", first)
+        self.assertIn("black_rating", first)
+        self.assertIn("end_time", first)
+        self.assertIn("time_class", first)
+
+        others_only = self.client.get("/api/problems?username=me&time_classes=outros")
+        self.assertEqual(others_only.status_code, 200)
+        others_payload = others_only.get_json()
+        self.assertEqual(others_payload["total"], 1)
+        self.assertEqual(others_payload["problems"][0]["game_id"], "g_daily")
+
+        no_timeout = self.client.get(
+            "/api/problems?username=me&time_classes=blitz,rapid,bullet,outros&ignore_timeout_losses=1"
+        )
+        self.assertEqual(no_timeout.status_code, 200)
+        no_timeout_payload = no_timeout.get_json()
+        no_timeout_ids = {item["game_id"] for item in no_timeout_payload["problems"]}
+        self.assertEqual(no_timeout_ids, {"g_blitz", "g_daily"})
+        self.assertEqual(no_timeout_payload["total"], 2)
+        self.assertIsNone(
+            next(item for item in payload["problems"] if item["game_id"] == "g_timeout_black")["white_rating"]
+        )
+        self.assertIsNone(
+            next(item for item in payload["problems"] if item["game_id"] == "g_timeout_black")["black_rating"]
+        )
+
     def test_api_game_not_found_and_found(self):
         missing = self.client.get("/api/game/not-found")
         self.assertEqual(missing.status_code, 404)
@@ -655,6 +786,12 @@ class AppTests(unittest.TestCase):
         self.assertIn('id="filtered-count"', template)
         self.assertIn("Partidas: 0", template)
         self.assertIn("Problemas: 0", template)
+        self.assertIn('id="go-problems-btn"', template)
+        self.assertIn('id="problem-modal-overlay"', template)
+        self.assertIn('id="problem-board"', template)
+        self.assertIn('id="problem-next-btn"', template)
+        self.assertIn('id="problem-repeat-btn"', template)
+        self.assertIn('id="problem-skip-btn"', template)
         self.assertIn("ChessEdu", template)
         self.assertNotIn("Chess.com Opening Explorer", template)
         self.assertNotIn("Entenda seus erros de abertura", template)
@@ -680,6 +817,18 @@ class AppTests(unittest.TestCase):
         self.assertIn("function updateColorFilterLabel()", script)
         self.assertIn("function refreshFilteredCount()", script)
         self.assertIn("function updateFilteredCount(count, problemsCount = 0)", script)
+        self.assertIn("function openProblemsSession()", script)
+        self.assertIn("function onProblemDrop(source, target)", script)
+        self.assertIn("function onProblemDragStart(source, piece)", script)
+        self.assertIn("function onProblemSnapEnd()", script)
+        self.assertIn("function applyProblemDragCursor(pieceCode)", script)
+        self.assertIn("function resetProblemCursor()", script)
+        self.assertIn("function showNextProblem()", script)
+        self.assertIn("function repeatCurrentProblem()", script)
+        self.assertIn("function closeProblemModal()", script)
+        self.assertIn("function ensureProblemBoardVisible()", script)
+        self.assertIn("startProblemTimer()", script)
+        self.assertIn("stopProblemTimer()", script)
         self.assertIn("function applyBoardOrientation()", script)
         self.assertIn("function buildPlayerLabel(name, rating)", script)
         self.assertIn("function updateReplayButtons()", script)
@@ -714,6 +863,12 @@ class AppTests(unittest.TestCase):
         self.assertIn(".filter-block", style)
         self.assertIn(".check-row", style)
         self.assertIn(".filter-count", style)
+        self.assertIn(".problem-modal-overlay", style)
+        self.assertIn(".problem-modal", style)
+        self.assertIn(".problem-feedback.success", style)
+        self.assertIn(".problem-btn-success", style)
+        self.assertIn(".problem-btn-danger", style)
+        self.assertIn(".problem-btn-neutral", style)
         self.assertIn(".game-result-win", style)
         self.assertIn(".game-result-loss", style)
         self.assertIn(".game-result-draw", style)
