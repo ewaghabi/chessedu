@@ -17,6 +17,7 @@ DEFAULT_DB_PATH = BASE_DIR / "games.db"
 DEFAULT_STOCKFISH_PATH = "/opt/homebrew/bin/stockfish"
 MATE_PAWN_VALUE = 10.0
 PROGRESS_UPDATE_EVERY_PLIES = 5
+LARGE_ADVANTAGE_PAWNS = 4.0
 
 
 def parse_one_decimal_positive(raw: str, flag_name: str) -> int:
@@ -52,6 +53,9 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             fen TEXT NOT NULL,
             side_to_move TEXT NOT NULL,
             pv_move_uci TEXT NOT NULL,
+            pv_line_uci TEXT,
+            pv_line_san TEXT,
+            eval_pv_final REAL,
             eval_prev REAL NOT NULL,
             eval_curr REAL NOT NULL,
             eval_delta REAL NOT NULL,
@@ -137,7 +141,9 @@ def score_to_pawns(score: chess.engine.PovScore) -> float:
             return MATE_PAWN_VALUE
         if mate < 0:
             return -MATE_PAWN_VALUE
-        return 0.0
+        # Mate(0) still represents a forced mate endpoint in this line; avoid
+        # collapsing it to equality, which would hide decisive outcomes.
+        return MATE_PAWN_VALUE
 
     cp = white_score.score()
     if cp is None:
@@ -145,7 +151,40 @@ def score_to_pawns(score: chess.engine.PovScore) -> float:
     return cp / 100.0
 
 
-def analyze_board(engine: Any, board: chess.Board, limit_seconds: float) -> tuple[float, str | None]:
+def pv_line_to_uci(pv: list[chess.Move]) -> str | None:
+    if not pv:
+        return None
+    return " ".join(move.uci() for move in pv)
+
+
+def pv_line_to_san(board: chess.Board, pv: list[chess.Move]) -> str | None:
+    if not pv:
+        return None
+    try:
+        return board.variation_san(pv)
+    except ValueError:
+        return None
+
+
+def eval_after_pv_line(engine: Any, fen: str, pv_line_uci: str | None, limit_seconds: float) -> float | None:
+    if not pv_line_uci:
+        return None
+
+    board = chess.Board(fen)
+    for raw_move in pv_line_uci.split():
+        try:
+            move = chess.Move.from_uci(raw_move)
+        except ValueError:
+            return None
+        if move not in board.legal_moves:
+            return None
+        board.push(move)
+
+    eval_after, _, _, _ = analyze_board(engine, board, limit_seconds)
+    return eval_after
+
+
+def analyze_board(engine: Any, board: chess.Board, limit_seconds: float) -> tuple[float, str | None, str | None, str | None]:
     info = engine.analyse(board, chess.engine.Limit(time=limit_seconds))
     score = info.get("score")
     if score is None:
@@ -154,7 +193,15 @@ def analyze_board(engine: Any, board: chess.Board, limit_seconds: float) -> tupl
     eval_pawns = score_to_pawns(score)
     pv = info.get("pv") or []
     pv_first = pv[0].uci() if pv else None
-    return eval_pawns, pv_first
+    pv_line_uci = pv_line_to_uci(pv)
+    pv_line_san = pv_line_to_san(board, pv)
+    return eval_pawns, pv_first, pv_line_uci, pv_line_san
+
+
+def is_relevant_problem_swing(eval_prev: float, eval_curr: float) -> bool:
+    if abs(eval_prev) >= LARGE_ADVANTAGE_PAWNS and abs(eval_curr) >= LARGE_ADVANTAGE_PAWNS and (eval_prev * eval_curr) > 0:
+        return False
+    return True
 
 
 def process_game(
@@ -175,33 +222,41 @@ def process_game(
     now = int(time.time())
 
     board = parsed_game.board()
-    prev_eval, _ = analyze_board(engine, board, eval_time_s)
+    prev_eval, prev_pv_first, prev_pv_line_uci, prev_pv_line_san = analyze_board(engine, board, eval_time_s)
 
     scanned = 0
     found = 0
     ply = 1
     for move in parsed_game.mainline_moves():
+        fen_before_move = board.fen()
+        side_before_move = "w" if board.turn == chess.WHITE else "b"
         board.push(move)
-        curr_eval, pv_first = analyze_board(engine, board, eval_time_s)
+        curr_eval, curr_pv_first, curr_pv_line_uci, curr_pv_line_san = analyze_board(engine, board, eval_time_s)
         scanned += 1
 
         eval_delta = abs(curr_eval - prev_eval)
-        if eval_delta > delta_limit and pv_first:
-            side_to_move = "w" if board.turn == chess.WHITE else "b"
+        played_uci = move.uci().lower()
+        best_uci = (prev_pv_first or "").lower()
+        is_missed_chance = bool(best_uci) and played_uci != best_uci
+        if eval_delta > delta_limit and is_missed_chance and is_relevant_problem_swing(prev_eval, curr_eval):
+            eval_pv_final = eval_after_pv_line(engine, fen_before_move, prev_pv_line_uci, eval_time_s)
             conn.execute(
                 """
                 INSERT INTO problem_positions (
-                    game_id, ply, fen, side_to_move, pv_move_uci,
-                    eval_prev, eval_curr, eval_delta,
+                    game_id, ply, fen, side_to_move, pv_move_uci, pv_line_uci, pv_line_san,
+                    eval_pv_final, eval_prev, eval_curr, eval_delta,
                     eval_time_tenths, eval_delta_tenths, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     game_id,
                     ply,
-                    board.fen(),
-                    side_to_move,
-                    pv_first,
+                    fen_before_move,
+                    side_before_move,
+                    prev_pv_first,
+                    prev_pv_line_uci,
+                    prev_pv_line_san,
+                    eval_pv_final,
                     prev_eval,
                     curr_eval,
                     eval_delta,
@@ -216,6 +271,9 @@ def process_game(
             progress_callback(scanned, found)
 
         prev_eval = curr_eval
+        prev_pv_first = curr_pv_first
+        prev_pv_line_uci = curr_pv_line_uci
+        prev_pv_line_san = curr_pv_line_san
         ply += 1
 
     if progress_callback:

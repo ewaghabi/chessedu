@@ -530,6 +530,9 @@ class AppTests(unittest.TestCase):
                     fen TEXT NOT NULL,
                     side_to_move TEXT NOT NULL,
                     pv_move_uci TEXT NOT NULL,
+                    pv_line_uci TEXT,
+                    pv_line_san TEXT,
+                    eval_pv_final REAL,
                     eval_prev REAL NOT NULL,
                     eval_curr REAL NOT NULL,
                     eval_delta REAL NOT NULL,
@@ -546,29 +549,43 @@ class AppTests(unittest.TestCase):
             conn.execute(
                 """
                 INSERT INTO problem_positions (
-                    game_id, ply, fen, side_to_move, pv_move_uci,
+                    game_id, ply, fen, side_to_move, pv_move_uci, pv_line_uci, pv_line_san,
                     eval_prev, eval_curr, eval_delta, eval_time_tenths, eval_delta_tenths, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("g_blitz", 1, chess.Board().fen(), "b", "e7e5", 0.0, 3.5, 3.5, 10, 30, 1700000101),
+                ("g_blitz", 1, chess.Board().fen(), "b", "e7e5", "e7e5", "1... e5", 0.0, 3.5, 3.5, 10, 30, 1700000101),
             )
             conn.execute(
                 """
                 INSERT INTO problem_positions (
-                    game_id, ply, fen, side_to_move, pv_move_uci,
+                    game_id, ply, fen, side_to_move, pv_move_uci, pv_line_uci, pv_line_san,
                     eval_prev, eval_curr, eval_delta, eval_time_tenths, eval_delta_tenths, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("g_daily", 1, chess.Board().fen(), "b", "d7d5", 0.0, 4.1, 4.1, 10, 30, 1700000103),
+                ("g_daily", 1, chess.Board().fen(), "b", "d7d5", "d7d5", "1... d5", 0.0, 4.1, 4.1, 10, 30, 1700000103),
             )
             conn.execute(
                 """
                 INSERT INTO problem_positions (
-                    game_id, ply, fen, side_to_move, pv_move_uci,
+                    game_id, ply, fen, side_to_move, pv_move_uci, pv_line_uci, pv_line_san,
                     eval_prev, eval_curr, eval_delta, eval_time_tenths, eval_delta_tenths, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("g_timeout_black", 1, chess.Board().fen(), "b", "e7e5", 0.0, 5.0, 5.0, 10, 30, 1700000104),
+                (
+                    "g_timeout_black",
+                    1,
+                    chess.Board().fen(),
+                    "b",
+                    "e7e5",
+                    "e7e5",
+                    "1... e5",
+                    0.0,
+                    5.0,
+                    5.0,
+                    10,
+                    30,
+                    1700000104,
+                ),
             )
             conn.commit()
 
@@ -639,6 +656,9 @@ class AppTests(unittest.TestCase):
                     fen TEXT NOT NULL,
                     side_to_move TEXT NOT NULL,
                     pv_move_uci TEXT NOT NULL,
+                    pv_line_uci TEXT,
+                    pv_line_san TEXT,
+                    eval_pv_final REAL,
                     eval_prev REAL NOT NULL,
                     eval_curr REAL NOT NULL,
                     eval_delta REAL NOT NULL,
@@ -655,29 +675,43 @@ class AppTests(unittest.TestCase):
             conn.execute(
                 """
                 INSERT INTO problem_positions (
-                    game_id, ply, fen, side_to_move, pv_move_uci,
+                    game_id, ply, fen, side_to_move, pv_move_uci, pv_line_uci, pv_line_san,
                     eval_prev, eval_curr, eval_delta, eval_time_tenths, eval_delta_tenths, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("g_blitz", 1, chess.Board().fen(), "w", "e2e4", 0.0, 3.5, 3.5, 10, 30, 1700000101),
+                ("g_blitz", 1, chess.Board().fen(), "w", "e2e4", "e2e4", "1. e4", 0.0, 3.5, 3.5, 10, 30, 1700000101),
             )
             conn.execute(
                 """
                 INSERT INTO problem_positions (
-                    game_id, ply, fen, side_to_move, pv_move_uci,
+                    game_id, ply, fen, side_to_move, pv_move_uci, pv_line_uci, pv_line_san,
                     eval_prev, eval_curr, eval_delta, eval_time_tenths, eval_delta_tenths, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("g_daily", 1, chess.Board().fen(), "b", "d7d5", 0.0, 4.1, 4.1, 10, 30, 1700000103),
+                ("g_daily", 1, chess.Board().fen(), "b", "d7d5", "d7d5", "1... d5", 0.0, 4.1, 4.1, 10, 30, 1700000103),
             )
             conn.execute(
                 """
                 INSERT INTO problem_positions (
-                    game_id, ply, fen, side_to_move, pv_move_uci,
+                    game_id, ply, fen, side_to_move, pv_move_uci, pv_line_uci, pv_line_san,
                     eval_prev, eval_curr, eval_delta, eval_time_tenths, eval_delta_tenths, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("g_timeout_black", 1, chess.Board().fen(), "b", "e7e5", 0.0, 5.0, 5.0, 10, 30, 1700000104),
+                (
+                    "g_timeout_black",
+                    1,
+                    chess.Board().fen(),
+                    "b",
+                    "e7e5",
+                    "e7e5",
+                    "1... e5",
+                    0.0,
+                    5.0,
+                    5.0,
+                    10,
+                    30,
+                    1700000104,
+                ),
             )
             conn.commit()
 
@@ -692,6 +726,11 @@ class AppTests(unittest.TestCase):
         self.assertIn("fen", first)
         self.assertIn("side_to_move", first)
         self.assertIn("pv_move_uci", first)
+        self.assertIn("pv_line_uci", first)
+        self.assertIn("pv_line_san", first)
+        self.assertIn("eval_pv_final", first)
+        self.assertIn("eval_prev", first)
+        self.assertIn("eval_curr", first)
         self.assertIn("white", first)
         self.assertIn("black", first)
         self.assertIn("white_rating", first)

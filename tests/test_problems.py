@@ -113,6 +113,9 @@ class ProblemsTests(unittest.TestCase):
             self.assertIn("correct_count", cols)
             self.assertIn("avg_correct_time_ms", cols)
             self.assertEqual(cols["pv_move_uci"]["notnull"], 1)
+            self.assertIn("pv_line_uci", cols)
+            self.assertIn("pv_line_san", cols)
+            self.assertIn("eval_pv_final", cols)
 
     def test_parse_one_decimal_positive_validates_format(self):
         self.assertEqual(problems.parse_one_decimal_positive("1.0", "--eval-time"), 10)
@@ -187,28 +190,85 @@ class ProblemsTests(unittest.TestCase):
             )
             inserted = conn.execute(
                 """
-                SELECT ply, side_to_move, pv_move_uci, presented_count, correct_count, avg_correct_time_ms
+                SELECT
+                    ply, fen, side_to_move, pv_move_uci, pv_line_uci, pv_line_san, eval_pv_final,
+                    presented_count, correct_count, avg_correct_time_ms
                 FROM problem_positions
                 WHERE game_id = 'g1'
                 ORDER BY id ASC
                 """
             ).fetchall()
 
+        board_after_e4 = chess.Board()
+        board_after_e4.push_uci("e2e4")
+
         self.assertEqual(scanned, 4)
         self.assertEqual(found, 1)
         self.assertEqual(len(inserted), 1)
         self.assertEqual(inserted[0]["ply"], 2)
-        self.assertEqual(inserted[0]["side_to_move"], "w")
+        self.assertEqual(inserted[0]["fen"], board_after_e4.fen())
+        self.assertEqual(inserted[0]["side_to_move"], "b")
         self.assertEqual(inserted[0]["pv_move_uci"], "e2e4")
+        self.assertEqual(inserted[0]["pv_line_uci"], "e2e4")
+        self.assertIsNone(inserted[0]["pv_line_san"])
+        self.assertIsNone(inserted[0]["eval_pv_final"])
         self.assertEqual(inserted[0]["presented_count"], 0)
         self.assertEqual(inserted[0]["correct_count"], 0)
         self.assertEqual(inserted[0]["avg_correct_time_ms"], 0.0)
 
+    def test_process_game_skips_when_played_move_matches_pv(self):
+        self._seed_game("g1", "1. e4 e5 2. Nf3 Nc6 1-0")
+        engine = SequenceEngine(
+            [
+                cp_info(0, "e2e4"),
+                cp_info(400, "e7e5"),
+                cp_info(410, "g1f3"),
+                cp_info(420, "b8c6"),
+                cp_info(430, "f1b5"),
+            ]
+        )
+
+        with app_module.db_conn() as conn:
+            problems.ensure_schema(conn)
+            row = conn.execute("SELECT id, pgn FROM games WHERE id = 'g1'").fetchone()
+            scanned, found = problems.process_game(
+                conn=conn,
+                engine=engine,
+                game_id=row["id"],
+                pgn_text=row["pgn"],
+                eval_time_tenths=10,
+                eval_delta_tenths=30,
+            )
+            count = conn.execute("SELECT COUNT(*) AS n FROM problem_positions WHERE game_id = 'g1'").fetchone()["n"]
+
+        self.assertEqual(scanned, 4)
+        self.assertEqual(found, 0)
+        self.assertEqual(count, 0)
+
     def test_score_to_pawns_saturates_mate_scores(self):
         mate_for_white = chess.engine.PovScore(chess.engine.Mate(3), chess.WHITE)
         mate_for_black = chess.engine.PovScore(chess.engine.Mate(-2), chess.WHITE)
+        mate_zero = chess.engine.PovScore(chess.engine.Mate(0), chess.WHITE)
         self.assertEqual(problems.score_to_pawns(mate_for_white), 10.0)
         self.assertEqual(problems.score_to_pawns(mate_for_black), -10.0)
+        self.assertEqual(problems.score_to_pawns(mate_zero), 10.0)
+
+    def test_pv_line_to_san_converts_legal_variation(self):
+        board = chess.Board()
+        line = [chess.Move.from_uci(uci) for uci in ["e2e4", "c7c5", "g1f3", "d7d6"]]
+        self.assertEqual(problems.pv_line_to_san(board, line), "1. e4 c5 2. Nf3 d6")
+
+    def test_eval_after_pv_line_returns_eval_after_applying_line(self):
+        engine = SequenceEngine([cp_info(123, pv_uci="d7d5")])
+        result = problems.eval_after_pv_line(engine, chess.Board().fen(), "e2e4", limit_seconds=0.1)
+        self.assertEqual(result, 1.23)
+
+    def test_is_relevant_problem_swing_filters_irrelevant_large_same_side_advantage(self):
+        self.assertTrue(problems.is_relevant_problem_swing(0.1, 3.5))
+        self.assertFalse(problems.is_relevant_problem_swing(4.5, 8.0))
+        self.assertTrue(problems.is_relevant_problem_swing(-1.5, 3.0))
+        self.assertTrue(problems.is_relevant_problem_swing(-3.0, 0.1))
+        self.assertFalse(problems.is_relevant_problem_swing(-9.0, -4.0))
 
     def test_run_batch_prints_progress(self):
         self._seed_game("g1", "1. e4 e5 2. Nf3 Nc6 1-0")

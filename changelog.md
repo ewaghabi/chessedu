@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.0
+- Gerador de problemas refinado para focar apenas em chances desperdiçadas: além do filtro de swing e relevância competitiva, posições em que o lance jogado coincide com a PV principal são descartadas.
+- Persistência de PV ampliada: problemas agora armazenam linha completa em UCI (`pv_line_uci`) e SAN (`pv_line_san`), mantendo `pv_move_uci` para compatibilidade.
+- Nova avaliação final baseada na solução: adicionado `eval_pv_final`, calculado após aplicar a PV completa na posição, com exibição no modal.
+- Correção de bug crítico em cenários de mate: valores de mate não colapsam mais para `+0` no cálculo de avaliação.
+- Modal de problemas atualizado:
+  - enunciado dinâmico com objetivos de treino (`obtêm vantagem decisiva`, `revertem a partida`, `igualam a posição`);
+  - feedback simplificado (`Correto.` / `Incorreto.` sem eco do lance jogado);
+  - botão `Mostrar solução` exibido somente após erro e ocultado após revelar PV+eval, mantendo fluxo de avanço para próximo problema.
+- Endpoint `GET /api/problems` estendido para expor `pv_line_uci`, `pv_line_san` e `eval_pv_final`.
+- Cobertura de testes ampliada para novos campos, regras de seleção de problemas, conversão SAN, avaliação após PV e regressões de mate.
+
 ## 0.7.0
 - Novo modo de treino de problemas com botão `GO!` no painel de filtros e modal dedicado para resolução tática.
 - Novo endpoint `GET /api/problems` com suporte aos mesmos filtros do app (`color`, `time_classes`, `ignore_timeout_losses`) e retorno de posição, lance esperado (PV), metadados da partida e ELO dos jogadores.

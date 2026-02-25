@@ -40,6 +40,9 @@ Este repositório contém um aplicativo local para analisar partidas do Chess.co
   5) confirmação explícita da branch antes de qualquer push remoto.
 
 ## Registro de erros confirmados
+- 2026-02-25 - PV de problemas era persistida apenas com o primeiro lance UCI, causando exibição incompleta e sem notação SAN no modal.
+  - Causa raiz: pipeline de análise descartava a linha completa retornada em `info["pv"]` e armazenava apenas `pv[0]`.
+  - Prevenção: persistir PV completa em coluna dedicada (UCI) e derivar SAN a partir do FEN da posição com teste de regressão para garantir múltiplos lances.
 - 2026-02-25 - Processo batch sem feedback contínuo de progresso aparentava travamento e exibia traceback ao interromper com Ctrl+C.
   - Causa raiz: progresso era exibido apenas ao fim de cada jogo e não havia tratamento explícito de interrupção do usuário.
   - Prevenção: em rotinas longas, exibir progresso intra-etapa em tempo real (heartbeat visual) e tratar KeyboardInterrupt com encerramento gracioso e resumo parcial.

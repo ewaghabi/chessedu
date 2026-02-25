@@ -62,6 +62,7 @@ const el = {
   problemFeedback: document.getElementById("problem-feedback"),
   problemNextBtn: document.getElementById("problem-next-btn"),
   problemRepeatBtn: document.getElementById("problem-repeat-btn"),
+  problemShowSolutionBtn: document.getElementById("problem-show-solution-btn"),
   problemSkipBtn: document.getElementById("problem-skip-btn"),
 };
 
@@ -313,6 +314,51 @@ function setProblemFeedback(text, mode = "") {
   el.problemFeedback.className = `problem-feedback ${mode}`.trim();
 }
 
+function formatSignedEval(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return "?";
+  }
+  return `${numeric >= 0 ? "+" : ""}${numeric.toFixed(1)}`;
+}
+
+function perspectiveEval(problem, rawEval) {
+  const numeric = Number(rawEval);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  return problem.side_to_move === "b" ? -numeric : numeric;
+}
+
+function buildProblemPrompt(problem) {
+  const sideLabel = problem.side_to_move === "b" ? "Negras" : "Brancas";
+  const prev = perspectiveEval(problem, problem.eval_prev);
+  const final = perspectiveEval(problem, problem.eval_pv_final ?? problem.eval_prev);
+
+  if (prev === null || final === null) {
+    return `${sideLabel} jogam e obtêm vantagem decisiva.`;
+  }
+
+  if (final >= 2.5 && prev < 1.0) {
+    if (prev <= -0.8) {
+      return `${sideLabel} jogam e revertem a partida.`;
+    }
+    return `${sideLabel} jogam e obtêm vantagem decisiva.`;
+  }
+
+  if (Math.abs(final) <= 0.8 && prev <= -1.2) {
+    return `${sideLabel} jogam e igualam a posição.`;
+  }
+
+  if (final > prev + 1.2) {
+    return `${sideLabel} jogam e obtêm vantagem decisiva.`;
+  }
+  if (prev < 0 && final >= 0) {
+    return `${sideLabel} jogam e revertem a partida.`;
+  }
+  return `${sideLabel} jogam e igualam a posição.`;
+}
+
 function resetProblemCursor() {
   document.body.style.cursor = "";
 }
@@ -327,9 +373,20 @@ function applyProblemDragCursor(pieceCode) {
   document.body.style.cursor = `url('${cursorUrl}') 22 22, grabbing`;
 }
 
-function setProblemActionButtons({ showNext = false, showRepeat = false } = {}) {
+function buildProblemSolutionText(problem) {
+  const pvLine =
+    (problem.pv_line_san && String(problem.pv_line_san).trim()) ||
+    (problem.pv_line_uci && String(problem.pv_line_uci).trim()) ||
+    (problem.pv_move_uci && String(problem.pv_move_uci).trim().toLowerCase()) ||
+    "?";
+  const finalEval = formatSignedEval(problem.eval_pv_final ?? problem.eval_prev ?? problem.eval_curr);
+  return `PV: ${pvLine} | Eval final: ${finalEval}`;
+}
+
+function setProblemActionButtons({ showNext = false, showRepeat = false, showSolution = false } = {}) {
   el.problemNextBtn.classList.toggle("hidden", !showNext);
   el.problemRepeatBtn.classList.toggle("hidden", !showRepeat);
+  el.problemShowSolutionBtn.classList.toggle("hidden", !showSolution);
 }
 
 function buildProblemQueue() {
@@ -389,8 +446,8 @@ function showNextProblem() {
   prepareProblemBoard(problemSession.current);
   ensureProblemBoardVisible();
   setProblemLabels(problemSession.current);
-  setProblemFeedback("Faça o melhor lance da posição.", "info");
-  setProblemActionButtons({ showNext: false, showRepeat: false });
+  setProblemFeedback(buildProblemPrompt(problemSession.current), "info");
+  setProblemActionButtons({ showNext: false, showRepeat: false, showSolution: false });
   startProblemTimer();
 }
 
@@ -401,8 +458,8 @@ function repeatCurrentProblem() {
   problemSession.locked = false;
   prepareProblemBoard(problemSession.current);
   ensureProblemBoardVisible();
-  setProblemFeedback("Tente novamente.", "info");
-  setProblemActionButtons({ showNext: false, showRepeat: false });
+  setProblemFeedback(buildProblemPrompt(problemSession.current), "info");
+  setProblemActionButtons({ showNext: false, showRepeat: false, showSolution: false });
   startProblemTimer();
 }
 
@@ -418,8 +475,8 @@ function closeProblemModal() {
   problemSession.current = null;
   problemSession.locked = true;
   el.problemModalOverlay.classList.add("hidden");
-  setProblemFeedback("Faça o melhor lance da posição.", "");
-  setProblemActionButtons({ showNext: false, showRepeat: false });
+  setProblemFeedback("Faça o melhor lance da posição.", "info");
+  setProblemActionButtons({ showNext: false, showRepeat: false, showSolution: false });
 }
 
 async function openProblemsSession() {
@@ -465,11 +522,11 @@ function onProblemDrop(source, target) {
   problemSession.locked = true;
 
   if (isCorrect) {
-    setProblemFeedback(`Correto! Lance: ${attemptedUci}`, "success");
-    setProblemActionButtons({ showNext: true, showRepeat: false });
+    setProblemFeedback(`Correto.\n${buildProblemSolutionText(problemSession.current)}`, "success");
+    setProblemActionButtons({ showNext: true, showRepeat: false, showSolution: false });
   } else {
-    setProblemFeedback(`Incorreto. Você jogou ${attemptedUci}.`, "error");
-    setProblemActionButtons({ showNext: false, showRepeat: true });
+    setProblemFeedback("Incorreto.", "error");
+    setProblemActionButtons({ showNext: false, showRepeat: true, showSolution: true });
   }
 
   return undefined;
@@ -690,6 +747,13 @@ function wireEvents() {
   });
   el.problemNextBtn.addEventListener("click", showNextProblem);
   el.problemRepeatBtn.addEventListener("click", repeatCurrentProblem);
+  el.problemShowSolutionBtn.addEventListener("click", () => {
+    if (!problemSession.current) {
+      return;
+    }
+    setProblemFeedback(buildProblemSolutionText(problemSession.current), "info");
+    setProblemActionButtons({ showNext: true, showRepeat: false, showSolution: false });
+  });
   el.problemSkipBtn.addEventListener("click", showNextProblem);
 
   el.syncBtn.addEventListener("click", doSync);
