@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0
+- Novo batch dedicado em `problems.py` para extração incremental de posições-problema com Stockfish, com parâmetros de tempo por lance e delta mínimo de avaliação.
+- Persistência de problemas em novas estruturas SQLite (`problem_positions` e `problem_scan_runs`) e marcação de processamento em `games.tactics_last_processed_at`, com migração aditiva preservando dados existentes.
+- UX do batch melhorada com progresso contínuo em linha durante cada jogo e interrupção graciosa por `Ctrl+C` sem traceback.
+- Painel de filtros da UI atualizado para exibir duas métricas: `Partidas` e `Problemas` (quantidade de problemas nos jogos filtrados), com extensão do endpoint `/api/count` para retornar `problems_count`.
+- Cobertura de testes ampliada para batch, incremental por parâmetros, tratamento de interrupção, migração de schema e nova contagem de problemas por filtro.
+
 ## 0.5.0
 - Filtros avançados no painel: ritmo com opção `outros`, opção para ignorar partidas com timeout, e contador total de partidas conforme filtros aplicados.
 - Robustez de carregamento de estado: quando há partidas no banco e o usuário salvo está ausente, o backend infere e preenche automaticamente o usuário mais frequente.

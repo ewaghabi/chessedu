@@ -503,16 +503,91 @@ class AppTests(unittest.TestCase):
         all_games = self.client.get("/api/count?username=me&time_classes=blitz,rapid,bullet,outros")
         self.assertEqual(all_games.status_code, 200)
         self.assertEqual(all_games.get_json()["count"], 4)
+        self.assertEqual(all_games.get_json()["problems_count"], 0)
 
         others_only = self.client.get("/api/count?username=me&time_classes=outros")
         self.assertEqual(others_only.status_code, 200)
         self.assertEqual(others_only.get_json()["count"], 1)
+        self.assertEqual(others_only.get_json()["problems_count"], 0)
 
         no_timeout = self.client.get(
             "/api/count?username=me&time_classes=blitz,rapid,bullet,outros&ignore_timeout_losses=1"
         )
         self.assertEqual(no_timeout.status_code, 200)
         self.assertEqual(no_timeout.get_json()["count"], 2)
+        self.assertEqual(no_timeout.get_json()["problems_count"], 0)
+
+    def test_api_count_returns_problems_count_for_filtered_games(self):
+        self._seed_games_for_advanced_filters()
+
+        with app_module.db_conn() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS problem_positions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    game_id TEXT NOT NULL,
+                    ply INTEGER NOT NULL,
+                    fen TEXT NOT NULL,
+                    side_to_move TEXT NOT NULL,
+                    pv_move_uci TEXT NOT NULL,
+                    eval_prev REAL NOT NULL,
+                    eval_curr REAL NOT NULL,
+                    eval_delta REAL NOT NULL,
+                    eval_time_tenths INTEGER NOT NULL,
+                    eval_delta_tenths INTEGER NOT NULL,
+                    presented_count INTEGER NOT NULL DEFAULT 0,
+                    correct_count INTEGER NOT NULL DEFAULT 0,
+                    avg_correct_time_ms REAL NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO problem_positions (
+                    game_id, ply, fen, side_to_move, pv_move_uci,
+                    eval_prev, eval_curr, eval_delta, eval_time_tenths, eval_delta_tenths, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("g_blitz", 1, chess.Board().fen(), "b", "e7e5", 0.0, 3.5, 3.5, 10, 30, 1700000101),
+            )
+            conn.execute(
+                """
+                INSERT INTO problem_positions (
+                    game_id, ply, fen, side_to_move, pv_move_uci,
+                    eval_prev, eval_curr, eval_delta, eval_time_tenths, eval_delta_tenths, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("g_daily", 1, chess.Board().fen(), "b", "d7d5", 0.0, 4.1, 4.1, 10, 30, 1700000103),
+            )
+            conn.execute(
+                """
+                INSERT INTO problem_positions (
+                    game_id, ply, fen, side_to_move, pv_move_uci,
+                    eval_prev, eval_curr, eval_delta, eval_time_tenths, eval_delta_tenths, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("g_timeout_black", 1, chess.Board().fen(), "b", "e7e5", 0.0, 5.0, 5.0, 10, 30, 1700000104),
+            )
+            conn.commit()
+
+        all_games = self.client.get("/api/count?username=me&time_classes=blitz,rapid,bullet,outros")
+        self.assertEqual(all_games.status_code, 200)
+        self.assertEqual(all_games.get_json()["count"], 4)
+        self.assertEqual(all_games.get_json()["problems_count"], 3)
+
+        others_only = self.client.get("/api/count?username=me&time_classes=outros")
+        self.assertEqual(others_only.status_code, 200)
+        self.assertEqual(others_only.get_json()["count"], 1)
+        self.assertEqual(others_only.get_json()["problems_count"], 1)
+
+        no_timeout = self.client.get(
+            "/api/count?username=me&time_classes=blitz,rapid,bullet,outros&ignore_timeout_losses=1"
+        )
+        self.assertEqual(no_timeout.status_code, 200)
+        self.assertEqual(no_timeout.get_json()["count"], 2)
+        self.assertEqual(no_timeout.get_json()["problems_count"], 2)
 
     def test_api_game_not_found_and_found(self):
         missing = self.client.get("/api/game/not-found")
@@ -578,6 +653,8 @@ class AppTests(unittest.TestCase):
         self.assertIn('id="time-outros"', template)
         self.assertIn('id="ignore-timeout-losses"', template)
         self.assertIn('id="filtered-count"', template)
+        self.assertIn("Partidas: 0", template)
+        self.assertIn("Problemas: 0", template)
         self.assertIn("ChessEdu", template)
         self.assertNotIn("Chess.com Opening Explorer", template)
         self.assertNotIn("Entenda seus erros de abertura", template)
@@ -602,6 +679,7 @@ class AppTests(unittest.TestCase):
         self.assertIn("function updateVersion(version)", script)
         self.assertIn("function updateColorFilterLabel()", script)
         self.assertIn("function refreshFilteredCount()", script)
+        self.assertIn("function updateFilteredCount(count, problemsCount = 0)", script)
         self.assertIn("function applyBoardOrientation()", script)
         self.assertIn("function buildPlayerLabel(name, rating)", script)
         self.assertIn("function updateReplayButtons()", script)

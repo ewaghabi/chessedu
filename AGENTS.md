@@ -40,6 +40,9 @@ Este repositório contém um aplicativo local para analisar partidas do Chess.co
   5) confirmação explícita da branch antes de qualquer push remoto.
 
 ## Registro de erros confirmados
+- 2026-02-25 - Processo batch sem feedback contínuo de progresso aparentava travamento e exibia traceback ao interromper com Ctrl+C.
+  - Causa raiz: progresso era exibido apenas ao fim de cada jogo e não havia tratamento explícito de interrupção do usuário.
+  - Prevenção: em rotinas longas, exibir progresso intra-etapa em tempo real (heartbeat visual) e tratar KeyboardInterrupt com encerramento gracioso e resumo parcial.
 - 2026-02-22 - Dependência crítica de CDN para tabuleiro (bibliotecas externas) em ambiente com restrição de rede.
   - Causa raiz: frontend dependia de assets remotos para funcionalidade essencial.
   - Prevenção: vendorizar dependências frontend críticas no repositório e servir localmente.

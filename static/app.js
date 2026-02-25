@@ -63,8 +63,8 @@ function updateColorFilterLabel() {
   el.colorFilterLabel.textContent = username ? `${username} joga de:` : "Jogador joga de:";
 }
 
-function updateFilteredCount(count) {
-  el.filteredCount.textContent = `Partidas com filtros: ${count}`;
+function updateFilteredCount(count, problemsCount = 0) {
+  el.filteredCount.innerHTML = `Partidas: ${count}<br />Problemas: ${problemsCount}`;
 }
 
 function buildFilterQuery() {
@@ -89,11 +89,11 @@ function applyBoardOrientation() {
 
 async function refreshFilteredCount() {
   if (!username) {
-    updateFilteredCount(0);
+    updateFilteredCount(0, 0);
     return;
   }
   const data = await apiJson(`/api/count?username=${encodeURIComponent(username)}&${buildFilterQuery()}`);
-  updateFilteredCount(data.count || 0);
+  updateFilteredCount(data.count || 0, data.problems_count || 0);
 }
 
 function updateReplayButtons() {

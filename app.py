@@ -618,8 +618,21 @@ def api_count():
 
     with closing(db_conn()) as conn:
         count = conn.execute(query, params).fetchone()["n"]
+        has_problem_positions = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='problem_positions' LIMIT 1"
+        ).fetchone()
+        problems_count = 0
+        if has_problem_positions:
+            problems_query = f"""
+                    SELECT COUNT(*) AS n
+                    FROM problem_positions pp
+                    JOIN games g ON g.id = pp.game_id
+                    WHERE (g.white = ? OR g.black = ?)
+                      {filters_sql}
+                    """
+            problems_count = conn.execute(problems_query, params).fetchone()["n"]
 
-    return jsonify({"username": username, "count": count})
+    return jsonify({"username": username, "count": count, "problems_count": problems_count})
 
 
 @app.get("/api/game/<game_id>")
